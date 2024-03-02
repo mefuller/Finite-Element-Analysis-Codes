@@ -1,5 +1,5 @@
 function Cmat = Cmat_transvIsoV3b(ndir, eps, E_m, nu_m, Ax, Bx, theta0, E_f, nu_f, v_f)
-    %Note: A and B variable names changed to Ax Bx 
+    % The following portion of code computes the C matrix for a nonlinear- strain locking material.  Comment out the code below if you do not wish to use this material model.
     e11 = eps(1);
     e22 = eps(2);
     e12 = eps(3);
@@ -39,6 +39,7 @@ function Cmat = Cmat_transvIsoV3b(ndir, eps, E_m, nu_m, Ax, Bx, theta0, E_f, nu_
          C(2,1) C(2,2) 0;...
          0 0 C(6,6)];
  end
-% % Test linear elastic material 
+
+% % elastic material.  If you wish to use an linear elastic material in the analysis, uncomment the code below and comment out all of the code above.
 % E=1e5; v=1/3;
 % Cmat = (E/((1+v)*(1-2*v)))*[1-v v 0;v 1-v 0; 0 0 (1-2*v)/2];
