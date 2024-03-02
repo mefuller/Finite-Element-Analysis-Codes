@@ -13,4 +13,4 @@ Anyone is welcome to use the analysis codes for educational, non-commercial purp
 See the wiki for an introduction and documentation.
 
 ### Who maintains and contributes to the project
-The project is created an maintained by Nicholas Payne (https://github.com/nickpayne12)
+The project is created an maintained by Nicholas Payne.
