@@ -1,8 +1,7 @@
-function [nodes, elements, adj, tracsetup] = makeRectMesh(xb, yb, divs);
+function [nodes, elements, adj, tracsetup] = makeRectMesh(xb, yb, divs)
 
 
     divs = divs; 
-    origin = origin;
     xb = xb;
     yb = yb;  
 
