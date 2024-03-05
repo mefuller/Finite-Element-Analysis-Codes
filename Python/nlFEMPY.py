@@ -25,12 +25,12 @@ class Mesh:
 
         self.nodes = np.stack((np.ndarray.flatten(x_locations), np.ndarray.flatten(y_locations)))
 
-        k = 0 #counter for element matrix loop
+        k = 0 #Create list of elements with their node numbers.
         for j in range(num_elements_y):
             for i in range(num_elements_x):
                 self.elements[:, k] = np.array([i+j*(num_elements_x+1), (i+1)+(j*(num_elements_x+1)), (i+1)+(j+1)*(num_elements_x+1), (i)+(j+1)*(num_elements_x+1) ]).T
                 k += 1
-
+        # Create the gauss points for each element and store in self.gauss_points.  The integration rule used is 2X2.    
         GP = np.array([[-1/np.sqrt(3), -1/np.sqrt(3), 1],
                        [1/np.sqrt(3), -1/np.sqrt(3), 1], 
                        [1/np.sqrt(3), 1/np.sqrt(3), 1],
@@ -42,7 +42,7 @@ class Mesh:
             eta = GP[i,1]
             N[i*2:i*2+2,:] = [[(1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta), 0], 
                                [ 0,  (1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta)]]
-            
+
         num_elements = self.elements.shape[1]
         Q = self.nodes[:, self.elements.ravel(order='F')]
         Q = np.reshape(Q, (8, num_elements), order='F')
@@ -51,6 +51,32 @@ class Mesh:
         print('output', np.tile(GP[:,2].T, [1, num_elements]))
         self.gauss_points = np.vstack((self.gps, np.tile(GP[:,2].T, [1, num_elements])))
 
+        # Create the B matrix and determinate of the Jacobian for each gauss point.
+        # def BmatdetJ(self, x, loc):
+        #     xi = loc[0]; eta = loc[1]
+        #     x1 = x[0]
+        #     y1 = x[1]
+        #     x2 = x[2]
+        #     y2 = x[3]
+        #     x3 = x[4]
+        #     y3 = x[5]
+        #     x4 = x[6]
+        #     y4 = x[7]
+        #     Jac = (1/4)*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
+        #                   -(1-xi)*x1 - (1+xi)*x2 + (1+xi)*x3 + (1-xi)*x4, -(1-xi)*y1 - (1+xi)*y2 + (1+xi)*y3 + (1-xi)*y4]])
+        #     J11 = Jac[0,0]; J12 = Jac[0,1]; J21 = Jac[1,0]; J22 = Jac[1,1]
+        #     detJ = J11*J22-J12*J21
+        #     A = (1/detJ)*np.array([[J22, -J12, 0, 0], [0, 0, -J21, J11], [-J21, J11, J22, -J12]])
+        #     G = (1/4)*np.array([[-(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta), 0],
+        #             [-(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi), 0],
+        #             [0, -(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta)],
+        #             [0, -(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi)]])
+        #     Bmat = A@G
+        # for elem in range(num_elements):
+        
+        #     for i in range(4):
+        #         [B(:,:,elem*Iorder^2-(Iorder^2-i)), detJ(elem*Iorder^2-(Iorder^2-i))]= BmatdetJ(reshape(nodes(:,elements(:,elem)),[8 1]),GP{Iorder}(i,:));
+   
 class Material_model:
     """Creates the model's constitutive materices."""
     def __init__(self, model_inputs, model_type):
