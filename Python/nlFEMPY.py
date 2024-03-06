@@ -3,9 +3,9 @@ import numpy as np
 class Mesh:
     """Creates a Mesh object of a rectangular meshed region with arrays containing the nodal positions and element numbering."""
     def __init__(self):
-        self.nodes = []
-        self.elements = []
-        self.gauss_points = []
+        self.nodes = None
+        self.elements = None
+        self.gauss_points = None
 
     def make_rect_mesh(self, size, num_elements):
         x_length = size[0]
@@ -101,7 +101,9 @@ class Material_model:
 class Global_K_matrix:
     """Global stiffness matrix object."""
     def __init__(self, nodes, elements, material_model):
-        self.K_global = np.zeros(nodes.shape[1]*2, nodes.shape[1]*2)
+        self.K_global = np.zeros((nodes.shape[1]*2, nodes.shape[1]*2))
+        self.DOF_mapping = None
+
 
 mesh1 = Mesh()
 mesh1.make_rect_mesh([10,2], [10,2])
@@ -109,3 +111,4 @@ print('nodes\n', mesh1.nodes)
 print('elements:\n', mesh1.elements)
 steel = Material_model([29e6, 0.29], "linear elastic")
 print('D:\n', steel.D)
+Kg = Global_K_matrix(mesh1.nodes, mesh1.elements, steel)
