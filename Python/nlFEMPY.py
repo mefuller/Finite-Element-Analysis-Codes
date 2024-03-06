@@ -1,13 +1,17 @@
 import numpy as np
 
+def map_global_local(x):
+    return x*2, x*2+1
+
 class Mesh:
-    """Creates a Mesh object of a rectangular meshed region with arrays containing the nodal positions and element numbering."""
+    """Mesh object of a meshed region with arrays containing the nodal positions and element numbering."""
     def __init__(self):
         self.nodes = None
         self.elements = None
         self.gauss_points = None
 
     def make_rect_mesh(self, size, num_elements):
+        """Creates a rectangular meshed region of defined by a width, height, and number of elements per side."""
         x_length = size[0]
         y_length = size[1]
         num_elements_x = num_elements[0]
@@ -28,7 +32,7 @@ class Mesh:
         k = 0 #Create list of elements with their node numbers.
         for j in range(num_elements_y):
             for i in range(num_elements_x):
-                self.elements[:, k] = np.array([i+j*(num_elements_x+1), (i+1)+(j*(num_elements_x+1)), (i+1)+(j+1)*(num_elements_x+1), (i)+(j+1)*(num_elements_x+1) ]).T
+                self.elements[:, k] = np.array([i+j*(num_elements_x+1), (i+1)+(j*(num_elements_x+1)), (i+1)+(j+1)*(num_elements_x+1), (i)+(j+1)*(num_elements_x+1) ], dtype='int').T
                 k += 1
         # Create the gauss points for each element and store in self.gauss_points.  The integration rule used is 2X2.    
         GP = np.array([[-1/np.sqrt(3), -1/np.sqrt(3), 1],
@@ -51,6 +55,7 @@ class Mesh:
 
         # Create the B matrix and determinate of the Jacobian for each gauss point.
         def BmatdetJ(self, x, loc):
+            """Computes the B matrices and value of the Jacobian determinates for each element and guass point."""
             xi = loc[0].item()
             eta = loc[1].item()
             x1 = x[0].item()
@@ -99,16 +104,116 @@ class Material_model:
             self.D = E/(1-nu**2)*np.array([[1, nu, 0.0], [nu, 1.0, 0.0], [0.0, 0.0, 0.5*(1.0-nu)]])
 
 class Global_K_matrix:
-    """Global stiffness matrix object."""
-    def __init__(self, nodes, elements, material_model):
+    """The global stiffness matrix object."""
+    def __init__(self, mesh: Mesh):
+        nodes = mesh.nodes
+        elements = mesh.elements
         self.K_global = np.zeros((nodes.shape[1]*2, nodes.shape[1]*2))
-        self.DOF_mapping = None
+        self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
+        i = 0
+        for element in elements.T:
+            self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_global_local, element))).T, order='F')
+            i += 1
+    def build(self, mesh: Mesh, material_model: Material_model):
+        """Constructs the global stiffness matrix."""
+        D = material_model.D
+        i = 0
+        for element in mesh.elements.T:
+            for k in range(4*i,4*i+4):
+                B = mesh.B[:,:,k]
+                weight = mesh.gauss_points[2,k]
+                detJ = mesh.detJ[k]
+                k = B.T@D@B*weight*detJ
+            # Scatter k to Kg
+            index = self.DOF_mapping[i,:]
+            n = 0
+            for position1 in index:
+                m = 0
+                for position2 in index:
+                    self.K_global[position1, position2] = k[n,m]
+                    m += 1
+                n += 1
+            i += 1
+
+class Global_T_matrix:
+    """The global internal nodal force vector."""
+    def __init__(self, mesh: Mesh):
+            nodes = mesh.nodes
+            elements = mesh.elements
+            self.T_global = np.zeros((nodes.shape[1]*2, 1))
+            self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
+            i = 0
+            for element in elements.T:
+                self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_global_local, element))).T, order='F')
+                i += 1
+    def build(self, mesh: Mesh):
+        """Constructs the global internal force vector."""
+        i = 0
+        for element in mesh.elements.T:
+            for k in range(4*i,4*i+4):
+                B = mesh.B[:,:,k]
+                weight = mesh.gauss_points[2,k]
+                detJ = mesh.detJ[k]
+                # k = B.T@nS*weight*detJ # nS is a placeholder for the stress field
+            # Scatter k to Kg
+            index = self.DOF_mapping[i,:]
+            n = 0
+            for position1 in index:
+                m = 0
+                for position2 in index:
+                    self.T_global[position1, position2] = k[n,m]
+                    m += 1
+                n += 1
+            i += 1
+
+class Global_F_matrix:
+    """The global applied nodal force vector."""
+    def __init__(self, mesh: Mesh):
+            nodes = mesh.nodes
+            elements = mesh.elements
+            self.F_global = np.zeros((nodes.shape[1]*2, 1))
+            self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
+            i = 0
+            for element in elements.T:
+                self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_global_local, element))).T, order='F')
+                i += 1
+    def build(self, mesh: Mesh):
+        """Constructs the global applied force vector."""
+
+class Nodal_quantity:
+    """An object that stores the values of nodes."""
+    def __init__(self, mesh: Mesh, number_of_components: int):
+        length = mesh.nodes.shape[1]
+        num = number_of_components
+        self.values = np.zeros((num, length))
+
+class Elemental_quantity:
+    """An object that stores the values of elements at the gauss points."""
+    def __init__(self, mesh: Mesh, number_of_components: int):
+        length = mesh.gauss_points.shape[1]
+        num = number_of_components
+        self.values = np.zeros((num, length))
+
+class Boundary_condition:
+    """Defines a boundary condition for the model."""
+    def __init__(self, K: Global_K_matrix):
+        K_global = K
 
 
+
+class Solver:
+    def __init__(self):
+        self.output = None
+
+
+# Test code
 mesh1 = Mesh()
 mesh1.make_rect_mesh([10,2], [10,2])
 print('nodes\n', mesh1.nodes)
 print('elements:\n', mesh1.elements)
 steel = Material_model([29e6, 0.29], "linear elastic")
 print('D:\n', steel.D)
-Kg = Global_K_matrix(mesh1.nodes, mesh1.elements, steel)
+Kg = Global_K_matrix(mesh1)
+print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
+Kg.build(mesh1, steel)
+print(Kg.K_global)
