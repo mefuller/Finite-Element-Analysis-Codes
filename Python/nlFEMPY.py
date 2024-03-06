@@ -47,53 +47,65 @@ class Mesh:
         Q = self.nodes[:, self.elements.ravel(order='F')]
         Q = np.reshape(Q, (8, num_elements), order='F')
         self.gps = np.reshape(N@Q, (2, num_elements*4), order='F')
-        print(GP[:,2].T)
-        print('output', np.tile(GP[:,2].T, [1, num_elements]))
         self.gauss_points = np.vstack((self.gps, np.tile(GP[:,2].T, [1, num_elements])))
 
         # Create the B matrix and determinate of the Jacobian for each gauss point.
-        # def BmatdetJ(self, x, loc):
-        #     xi = loc[0]; eta = loc[1]
-        #     x1 = x[0]
-        #     y1 = x[1]
-        #     x2 = x[2]
-        #     y2 = x[3]
-        #     x3 = x[4]
-        #     y3 = x[5]
-        #     x4 = x[6]
-        #     y4 = x[7]
-        #     Jac = (1/4)*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
-        #                   -(1-xi)*x1 - (1+xi)*x2 + (1+xi)*x3 + (1-xi)*x4, -(1-xi)*y1 - (1+xi)*y2 + (1+xi)*y3 + (1-xi)*y4]])
-        #     J11 = Jac[0,0]; J12 = Jac[0,1]; J21 = Jac[1,0]; J22 = Jac[1,1]
-        #     detJ = J11*J22-J12*J21
-        #     A = (1/detJ)*np.array([[J22, -J12, 0, 0], [0, 0, -J21, J11], [-J21, J11, J22, -J12]])
-        #     G = (1/4)*np.array([[-(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta), 0],
-        #             [-(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi), 0],
-        #             [0, -(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta)],
-        #             [0, -(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi)]])
-        #     Bmat = A@G
-        # for elem in range(num_elements):
-        
-        #     for i in range(4):
-        #         [B(:,:,elem*Iorder^2-(Iorder^2-i)), detJ(elem*Iorder^2-(Iorder^2-i))]= BmatdetJ(reshape(nodes(:,elements(:,elem)),[8 1]),GP{Iorder}(i,:));
+        def BmatdetJ(self, x, loc):
+            xi = loc[0].item()
+            eta = loc[1].item()
+            x1 = x[0].item()
+            y1 = x[1].item()
+            x2 = x[2].item()
+            y2 = x[3].item()
+            x3 = x[4].item()
+            y3 = x[5].item()
+            x4 = x[6].item()
+            y4 = x[7].item()
+            Jac = 0.25*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
+                                  [-(1-xi)*x1 - (1+xi)*x2 + (1+xi)*x3 + (1-xi)*x4, -(1-xi)*y1 - (1+xi)*y2 + (1+xi)*y3 + (1-xi)*y4]])
+            J11 = Jac[0,0]
+            J12 = Jac[0,1]
+            J21 = Jac[1,0]
+            J22 = Jac[1,1]
+            detJ = J11*J22-J12*J21
+            A = (1.0/detJ)*np.array([[J22, -J12, 0., 0.], [0., 0., -J21, J11], [-J21, J11, J22, -J12]])
+            G = (1/4)*np.array([[-(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta), 0],
+                    [-(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi), 0],
+                    [0, -(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta)],
+                    [0, -(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi)]])
+            Bmat = A@G
+            return Bmat, detJ
+        self.B = np.zeros((3,8,num_elements*4))
+        self.detJ = np.zeros(num_elements*4)
+        for elem in range(num_elements):
+            for i in range(4):
+                output1, output2 = BmatdetJ(self, np.reshape(self.nodes[:, self.elements[:, elem]], (8, 1), order='F'), GP[i,:])
+                self.B[:,:, elem*4-(4-i)] = output1
+                self.detJ[elem*4-(4-i)] = output2
    
 class Material_model:
-    """Creates the model's constitutive materices."""
-    def __init__(self, model_inputs, model_type):
+    """Material model class object which contains the stiffness matrix, D, and other constitutive matrices.\n
+       arguments:\n
+       model_inputs = a value or array of values which populate a particular model\n
+       model_type = a string which specified the type of material model.\n
+       Available model input and types:\n
+       [E, nu] "linear elastic"\n
+       """
+    def __init__(self, model_inputs: float, model_type: str):
         self.type = model_type
-
         if self.type == "linear elastic":
             E = model_inputs[0]
             nu = model_inputs[1]
-            self.D_matrix = E/(1-nu**2)*np.array([[1, nu, 0.0], [nu, 1.0, 0.0], [0.0, 0.0, 0.5*(1.0-nu)]])
+            self.D = E/(1-nu**2)*np.array([[1, nu, 0.0], [nu, 1.0, 0.0], [0.0, 0.0, 0.5*(1.0-nu)]])
 
 class Global_K_matrix:
+    """Global stiffness matrix object."""
     def __init__(self, nodes, elements, material_model):
         self.K_global = np.zeros(nodes.shape[1]*2, nodes.shape[1]*2)
-
-
 
 mesh1 = Mesh()
 mesh1.make_rect_mesh([10,2], [10,2])
 print('nodes\n', mesh1.nodes)
 print('elements:\n', mesh1.elements)
+steel = Material_model([29e6, 0.29], "linear elastic")
+print('D:\n', steel.D)
