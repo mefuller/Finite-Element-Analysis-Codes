@@ -1,6 +1,6 @@
 import numpy as np
 
-def map_global_local(x):
+def map_DOF(x):
     return x*2, x*2+1
 
 class Mesh:
@@ -112,7 +112,7 @@ class Global_K_matrix:
         self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
         i = 0
         for element in elements.T:
-            self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_global_local, element))).T, order='F')
+            self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
             i += 1
     def build(self, mesh: Mesh, material_model: Material_model):
         """Constructs the global stiffness matrix."""
@@ -144,7 +144,7 @@ class Global_T_matrix:
             self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
             i = 0
             for element in elements.T:
-                self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_global_local, element))).T, order='F')
+                self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
     def build(self, mesh: Mesh):
         """Constructs the global internal force vector."""
@@ -175,7 +175,7 @@ class Global_F_matrix:
             self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
             i = 0
             for element in elements.T:
-                self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_global_local, element))).T, order='F')
+                self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
     def build(self, mesh: Mesh):
         """Constructs the global applied force vector."""
@@ -186,6 +186,8 @@ class Nodal_quantity:
         length = mesh.nodes.shape[1]
         num = number_of_components
         self.values = np.zeros((num, length))
+    def update(self, values):
+        self.values = values
 
 class Elemental_quantity:
     """An object that stores the values of elements at the gauss points."""
@@ -193,13 +195,13 @@ class Elemental_quantity:
         length = mesh.gauss_points.shape[1]
         num = number_of_components
         self.values = np.zeros((num, length))
+    def update(self, values):
+        self.values = values
 
 class Boundary_condition:
     """Defines a boundary condition for the model."""
-    def __init__(self, K: Global_K_matrix):
+    def __init__(self, K_global: Global_K_matrix):
         K_global = K
-
-
 
 class Solver:
     def __init__(self):
