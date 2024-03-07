@@ -1,4 +1,8 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as ptch
+
+
 
 def map_DOF(x):
     return x*2, x*2+1
@@ -20,7 +24,7 @@ class Mesh:
         # Pre-size matrices
         num_nodes = (num_elements_x + 1)*(num_elements_y + 1)
         self.nodes = np.zeros((2, num_nodes*num_nodes), dtype='float')
-        self.elements = np.zeros((4, (num_elements_x)*(num_elements_y)), dtype='int')
+        self.elements = np.zeros(((num_elements_x)*(num_elements_y), 4), dtype='int')
 
         #make x and y coordinates
         x_coordinates = np.linspace(0.0, x_length, num_elements_x + 1)
@@ -32,7 +36,7 @@ class Mesh:
         k = 0 #Create list of elements with their node numbers.
         for j in range(num_elements_y):
             for i in range(num_elements_x):
-                self.elements[:, k] = np.array([i+j*(num_elements_x+1), (i+1)+(j*(num_elements_x+1)), (i+1)+(j+1)*(num_elements_x+1), (i)+(j+1)*(num_elements_x+1) ], dtype='int').T
+                self.elements[k, :] = np.array([i+j*(num_elements_x+1), (i+1)+(j*(num_elements_x+1)), (i+1)+(j+1)*(num_elements_x+1), (i)+(j+1)*(num_elements_x+1)], dtype='int')
                 k += 1
         # Create the gauss points for each element and store in self.gauss_points.  The integration rule used is 2X2.    
         GP = np.array([[-1/np.sqrt(3), -1/np.sqrt(3), 1],
@@ -47,7 +51,7 @@ class Mesh:
             N[i*2:i*2+2,:] = [[(1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta), 0], 
                                [ 0,  (1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta)]]
 
-        num_elements = self.elements.shape[1]
+        num_elements = self.elements.shape[0]
         Q = self.nodes[:, self.elements.ravel(order='F')]
         Q = np.reshape(Q, (8, num_elements), order='F')
         self.gps = np.reshape(N@Q, (2, num_elements*4), order='F')
@@ -56,16 +60,8 @@ class Mesh:
         # Create the B matrix and determinate of the Jacobian for each gauss point.
         def BmatdetJ(self, x, loc):
             """Computes the B matrices and value of the Jacobian determinates for each element and guass point."""
-            xi = loc[0].item()
-            eta = loc[1].item()
-            x1 = x[0].item()
-            y1 = x[1].item()
-            x2 = x[2].item()
-            y2 = x[3].item()
-            x3 = x[4].item()
-            y3 = x[5].item()
-            x4 = x[6].item()
-            y4 = x[7].item()
+            xi, eta = loc[0:2]
+            x1, y1, x2, y2, x3, y3, x4, y4 = np.ndarray.flatten(x)
             Jac = 0.25*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
                                   [-(1-xi)*x1 - (1+xi)*x2 + (1+xi)*x3 + (1-xi)*x4, -(1-xi)*y1 - (1+xi)*y2 + (1+xi)*y3 + (1-xi)*y4]])
             J11 = Jac[0,0]
@@ -84,7 +80,8 @@ class Mesh:
         self.detJ = np.zeros(num_elements*4)
         for elem in range(num_elements):
             for i in range(4):
-                output1, output2 = BmatdetJ(self, np.reshape(self.nodes[:, self.elements[:, elem]], (8, 1), order='F'), GP[i,:])
+                # output1, output2 = BmatdetJ(self, np.reshape(self.nodes[:, self.elements[:, elem]], (8, 1), order='F'), GP[i,:])
+                output1, output2 = BmatdetJ(self, self.nodes[:, self.elements[elem, :]], GP[i,:])
                 self.B[:,:, elem*4-(4-i)] = output1
                 self.detJ[elem*4-(4-i)] = output2
    
@@ -109,9 +106,9 @@ class Global_K_matrix:
         nodes = mesh.nodes
         elements = mesh.elements
         self.K_global = np.zeros((nodes.shape[1]*2, nodes.shape[1]*2))
-        self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
+        self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
         i = 0
-        for element in elements.T:
+        for element in elements:
             self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
             i += 1
     def build(self, mesh: Mesh, material_model: Material_model):
@@ -141,12 +138,12 @@ class Global_T_matrix:
             nodes = mesh.nodes
             elements = mesh.elements
             self.T_global = np.zeros((nodes.shape[1]*2, 1))
-            self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
+            self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
             i = 0
-            for element in elements.T:
+            for element in elements:
                 self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
-    def build(self, mesh: Mesh):
+    def build(self, mesh: Mesh, S):
         """Constructs the global internal force vector."""
         i = 0
         for element in mesh.elements.T:
@@ -154,15 +151,12 @@ class Global_T_matrix:
                 B = mesh.B[:,:,k]
                 weight = mesh.gauss_points[2,k]
                 detJ = mesh.detJ[k]
-                # k = B.T@nS*weight*detJ # nS is a placeholder for the stress field
-            # Scatter k to Kg
+                t = B.T@S[:,k]*weight*detJ # S is the stress field
+            # Scatter t to Tg !!!! Check this !!!!!
             index = self.DOF_mapping[i,:]
             n = 0
             for position1 in index:
-                m = 0
-                for position2 in index:
-                    self.T_global[position1, position2] = k[n,m]
-                    m += 1
+                self.T_global[position1, 0] = t[n,0]
                 n += 1
             i += 1
 
@@ -172,9 +166,9 @@ class Global_F_matrix:
             nodes = mesh.nodes
             elements = mesh.elements
             self.F_global = np.zeros((nodes.shape[1]*2, 1))
-            self.DOF_mapping = np.zeros((elements.shape[1], 8), dtype='int')
+            self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
             i = 0
-            for element in elements.T:
+            for element in elements:
                 self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
     def build(self, mesh: Mesh):
@@ -200,17 +194,68 @@ class Elemental_quantity:
 
 class Boundary_condition:
     """Defines a boundary condition for the model."""
-    def __init__(self, K_global: Global_K_matrix):
-        K_global = K
+    def __init__(self, DOFs: np.ndarray, values: np.ndarray, Kg: Global_K_matrix):
+        self.DOFs = DOFs
+        self.values = values
+        K = Kg.K_global
+        self.num_DOFs = DOFs.shape[0]
+        self.dim_Kglobal = K.shape[0]
+        self.type = None
+    def create_LagrangeMultipliers(self):
+        """Creates the C and Q matrices necessary for the Langrange multiplier approach."""
+        self.type = "Lagrange multipliers"
+        self.C = np.zeros((self.num_DOFs, self.dim_Kglobal))
+        self.Q = np.zeros((self.num_DOFs, 1))
+        for k in range(self.num_DOFs):
+            self.C[k, self.DOFs[k]] = 1.0
+            self.Q[k, 0] = self.values[k]
+        # do dadlamb = [K C';C zeros(size(C,1))]\[R;Q] in the solver to apply the BC.
+
 
 class Solver:
     def __init__(self):
         self.output = None
 
 
+## Plot Functions ##
+        
+def plot_Mesh(mesh: Mesh):
+    node_x_locations = mesh.nodes[0]
+    node_y_locations = mesh.nodes[1]
+    max_x = np.max(node_x_locations)
+    max_y = np.max(node_y_locations)
+    
+
+    fig, ax = plt.subplots()
+    for element in mesh.elements:
+        x = mesh.nodes[0, element]
+        y = mesh.nodes[1, element]
+        ax.fill(x, y, facecolor='None', edgecolor='black')
+    ax.scatter(node_x_locations, node_y_locations, color="blue") # Plot nodes
+    for i in range(mesh.nodes.shape[1]):
+        ax.annotate(str(i), (node_x_locations[i]+0.02*max_x, node_y_locations[i]+0.02*max_y), ) # Plot node labels
+    for i in range(mesh.elements.shape[0]):
+        ax.annotate(f'Element: {i}', (np.mean(mesh.nodes[0,mesh.elements[i]]), np.mean(mesh.nodes[1,mesh.elements[i]])), ha='center', va='center', color="red") # Plot element labels
+    plt.subplots_adjust(top=1.25, right=1.25)
+    plt.show()
+
+
+
+# # Test code
+# mesh1 = Mesh()
+# mesh1.make_rect_mesh([10,2], [10,2])
+# print('nodes\n', mesh1.nodes)
+# print('elements:\n', mesh1.elements)
+# steel = Material_model([29e6, 0.29], "linear elastic")
+# print('D:\n', steel.D)
+# Kg = Global_K_matrix(mesh1)
+# print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
+# Kg.build(mesh1, steel)
+# # print(Kg.K_global)
+
 # Test code
 mesh1 = Mesh()
-mesh1.make_rect_mesh([10,2], [10,2])
+mesh1.make_rect_mesh([1,1], [2,4])
 print('nodes\n', mesh1.nodes)
 print('elements:\n', mesh1.elements)
 steel = Material_model([29e6, 0.29], "linear elastic")
@@ -219,3 +264,4 @@ Kg = Global_K_matrix(mesh1)
 print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
 Kg.build(mesh1, steel)
 print(Kg.K_global)
+plot_Mesh(mesh1)
