@@ -60,13 +60,13 @@ class Mesh:
         def BmatdetJ(self, x, loc):
             """Computes the B matrices and value of the Jacobian determinates for each element and guass point."""
             xi, eta = loc[0:2]
-            x1, x2, x3, x4, y1, y2, y3, y4 = np.ravel(x)
-            J = 1/4*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
+            x1, y1, x2, y2, x3, y3, x4, y4 = np.ndarray.flatten(x)
+            Jac = 0.25*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
                                   [-(1-xi)*x1 - (1+xi)*x2 + (1+xi)*x3 + (1-xi)*x4, -(1-xi)*y1 - (1+xi)*y2 + (1+xi)*y3 + (1-xi)*y4]])
-            J11 = J[0,0]
-            J12 = J[0,1]
-            J21 = J[1,0]
-            J22 = J[1,1]
+            J11 = Jac[0,0]
+            J12 = Jac[0,1]
+            J21 = Jac[1,0]
+            J22 = Jac[1,1]
             detJ = J11*J22-J12*J21
             A = (1.0/detJ)*np.array([[J22, -J12, 0., 0.], [0., 0., -J21, J11], [-J21, J11, J22, -J12]])
             G = (1/4)*np.array([[-(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta), 0],
@@ -80,26 +80,9 @@ class Mesh:
         for elem in range(num_elements):
             for i in range(4):
                 # output1, output2 = BmatdetJ(self, np.reshape(self.nodes[:, self.elements[:, elem]], (8, 1), order='F'), GP[i,:])
-                output1, output2 = BmatdetJ(self, self.nodes[:, self.elements[elem]], GP[i,:])
+                output1, output2 = BmatdetJ(self, self.nodes[:, self.elements[elem, :]], GP[i,:])
                 self.B[:,:, elem*4-(4-i)] = output1
                 self.detJ[elem*4-(4-i)] = output2
-    def make_plot(self):
-        node_x_locations = self.nodes[0]
-        node_y_locations = self.nodes[1]
-        max_x = np.max(node_x_locations)
-        max_y = np.max(node_y_locations)
-
-        fig, ax = plt.subplots()
-        for element in self.elements:
-            x = self.nodes[0, element]
-            y = self.nodes[1, element]
-            ax.fill(x,y, facecolor='None', edgecolor='black')
-        ax.scatter(node_x_locations, node_y_locations, color="blue")
-        for i in range(self.nodes.shape[1]):
-            ax.annotate(str(i), (node_x_locations[i]+0.02*max_x, node_y_locations[i]+0.02*max_y))
-        for i in range(self.elements.shape[0]):
-            ax.annotate(f'Element: {i}', (np.mean(self.nodes[0,self.elements[i]]), np.mean(self.nodes[1,self.elements[i]])), ha='center', va='center', color="red")
-        plt.show()
    
 class Material_model:
     """Material model class object which contains the stiffness matrix, D, and other constitutive matrices.\n
@@ -131,7 +114,7 @@ class Global_K_matrix:
         """Constructs the global stiffness matrix."""
         D = material_model.D
         i = 0
-        for element in mesh.elements:
+        for element in mesh.elements.T:
             for k in range(4*i,4*i+4):
                 B = mesh.B[:,:,k]
                 weight = mesh.gauss_points[2,k]
@@ -219,7 +202,7 @@ class Solver:
 
 ## Plotting Functions ##
         
-def plot(mesh: Mesh):
+def plot_Mesh(mesh: Mesh):
     node_x_locations = mesh.nodes[0]
     node_y_locations = mesh.nodes[1]
     max_x = np.max(node_x_locations)
@@ -238,14 +221,28 @@ def plot(mesh: Mesh):
     plt.show()
 
 
+
+# # Test code
+# mesh1 = Mesh()
+# mesh1.make_rect_mesh([10,2], [10,2])
+# print('nodes\n', mesh1.nodes)
+# print('elements:\n', mesh1.elements)
+# steel = Material_model([29e6, 0.29], "linear elastic")
+# print('D:\n', steel.D)
+# Kg = Global_K_matrix(mesh1)
+# print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
+# Kg.build(mesh1, steel)
+# # print(Kg.K_global)
+
 # Test code
 mesh1 = Mesh()
-mesh1.make_rect_mesh([2,1], [1,1])
+mesh1.make_rect_mesh([1,1], [2,4])
 print('nodes\n', mesh1.nodes)
 print('elements:\n', mesh1.elements)
-steel = Material_model([30e6, 0.3], "linear elastic")
+steel = Material_model([29e6, 0.29], "linear elastic")
 print('D:\n', steel.D)
 Kg = Global_K_matrix(mesh1)
 print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
 Kg.build(mesh1, steel)
-print('B:', mesh1.B)
+print(Kg.K_global)
+plot_Mesh(mesh1)
