@@ -60,8 +60,8 @@ class Mesh:
         def BmatdetJ(self, x, loc):
             """Computes the B matrices and value of the Jacobian determinates for each element and guass point."""
             xi, eta = loc[0:2]
-            x1, y1, x2, y2, x3, y3, x4, y4 = np.ndarray.flatten(x)
-            Jac = 0.25*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
+            x1, x2, x3, x4, y1, y2, y3, y4 = np.ravel(x)
+            Jac = 1/4*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
                                   [-(1-xi)*x1 - (1+xi)*x2 + (1+xi)*x3 + (1-xi)*x4, -(1-xi)*y1 - (1+xi)*y2 + (1+xi)*y3 + (1-xi)*y4]])
             J11 = Jac[0,0]
             J12 = Jac[0,1]
@@ -80,10 +80,34 @@ class Mesh:
         for elem in range(num_elements):
             for i in range(4):
                 # output1, output2 = BmatdetJ(self, np.reshape(self.nodes[:, self.elements[:, elem]], (8, 1), order='F'), GP[i,:])
-                output1, output2 = BmatdetJ(self, self.nodes[:, self.elements[elem, :]], GP[i,:])
+                output1, output2 = BmatdetJ(self, self.nodes[:, self.elements[elem]], GP[i,:])
                 self.B[:,:, elem*4-(4-i)] = output1
                 self.detJ[elem*4-(4-i)] = output2
-   
+    def plot(self):
+        node_x_locations = self.nodes[0]
+        node_y_locations = self.nodes[1]
+        max_x = np.max(node_x_locations)
+        max_y = np.max(node_y_locations)
+
+        fig, ax = plt.subplots()
+        for element in self.elements:
+            x = self.nodes[0, element]
+            y = self.nodes[1, element]
+            ax.fill(x,y, facecolor='None', edgecolor='black')
+        ax.scatter(node_x_locations, node_y_locations, color="black")
+        for i in range(self.nodes.shape[1]):
+            ax.annotate('node: '+str(i), (node_x_locations[i]+0.02*max_x, node_y_locations[i]+0.12*max_y))
+
+            plt.arrow(node_x_locations[i], node_y_locations[i], 0.04*np.mean([max_x, max_y]), 0, width=0.01, color='green')
+            ax.annotate(str(i*2), (node_x_locations[i]+0.04*max_x, node_y_locations[i] + 0.04*max_y), color='green')
+
+            plt.arrow(node_x_locations[i], node_y_locations[i], 0, 0.04*np.mean([max_x, max_y]), width=0.01, color='orange')
+            ax.annotate(str(i*2+1), (node_x_locations[i]-0.04*max_x, node_y_locations[i] + 0.04*max_y), color='orange')
+        for i in range(self.elements.shape[0]):
+            ax.annotate(f'Element: {i}', (np.mean(self.nodes[0, self.elements[i]]), np.mean(self.nodes[1, self.elements[i]])), ha='center', va='center', color="red")
+        # plt.subplots_adjust(top=2, right=2, bottom=1.5)
+        ax.set_aspect('equal', 'box')
+        plt.show()
 class Material_model:
     """Material model class object which contains the stiffness matrix, D, and other constitutive matrices.\n
        arguments:\n
@@ -114,7 +138,7 @@ class Global_K_matrix:
         """Constructs the global stiffness matrix."""
         D = material_model.D
         i = 0
-        for element in mesh.elements.T:
+        for element in mesh.elements:
             for k in range(4*i,4*i+4):
                 B = mesh.B[:,:,k]
                 weight = mesh.gauss_points[2,k]
@@ -185,64 +209,72 @@ class Nodal_quantity:
 class Elemental_quantity:
     """An object that stores the values of elements at the gauss points."""
     def __init__(self, mesh: Mesh, number_of_components: int):
-        length = mesh.gauss_points.shape[1]
-        num = number_of_components
-        self.values = np.zeros((num, length))
-    def update(self, values):
-        self.values = values
+        self.length = mesh.gauss_points.shape[1]
+        self.num = number_of_components
+        self.values = np.zeros((self.num, self.length))
+    def update(self, new_values):
+        self.values = new_values
+    def return_all(self):
+        return self.values
+        
+class Stress(Elemental_quantity):
+    """Stress tensor object."""
+    def __init__(self, mesh: Mesh, number_of_components = 3):
+        super().__init__(mesh, number_of_components)
+        self.values = {'S11': np.zeros(self.length), 'S22': np.zeros(self.length), 'S12': np.zeros(self.length)}
+        self.tensor = np.array([self.values['S11'], self.values['S22'], self.values['S12']])
+    def update(self, new_values):
+        self.values['S11'], self.values['S22'], self.values['S12'] = new_values
+    def return_all(self):
+        return np.array([self.values['S11'], self.values['S22'], self.values['S12']])
+
+class Strain(Elemental_quantity):
+    """Strain tensor object."""
+    def __init__(self, mesh: Mesh, number_of_components = 3):
+        super().__init__(mesh, number_of_components)
+        self.values = {'E11': np.zeros(self.length), 'E22': np.zeros(self.length), 'E12': np.zeros(self.length)}
+        self.tensor = np.array([self.values['E11'], self.values['E22'], self.values['E12']])
+    def update(self, new_values):
+        self.values['E11'], self.values['E22'], self.values['E12'] = new_values
+    def return_all(self):
+        return np.array([self.values['E11'], self.values['E22'], self.values['E12']])
 
 class Boundary_condition:
     """Defines a boundary condition for the model."""
-    def __init__(self, K_global: Global_K_matrix):
-        K_global = K
+    def __init__(self, DOFs: np.ndarray, values: np.ndarray, Kg: Global_K_matrix):
+        self.DOFs = DOFs
+        self.values = values
+        K = Kg.K_global
+        self.num_DOFs = DOFs.shape[0]
+        self.dim_Kglobal = K.shape[0]
+        self.type = None
+    def create_LagrangeMultipliers(self):
+        """Creates the C and Q matrices necessary for the Langrange multiplier approach."""
+        self.type = "Lagrange multipliers"
+        self.C = np.zeros((self.num_DOFs, self.dim_Kglobal))
+        self.Q = np.zeros((self.num_DOFs, 1))
+        for k in range(self.num_DOFs):
+            self.C[k, self.DOFs[k]] = 1.0
+            self.Q[k, 0] = self.values[k]
+        # do dadlamb = [K C';C zeros(size(C,1))]\[R;Q] in the solver to apply the BC.global: Global_K_matrix):
 
 class Solver:
     def __init__(self):
         self.output = None
 
-## Plotting Functions ##
-        
-def plot_Mesh(mesh: Mesh):
-    node_x_locations = mesh.nodes[0]
-    node_y_locations = mesh.nodes[1]
-    max_x = np.max(node_x_locations)
-    max_y = np.max(node_y_locations)
-
-    fig, ax = plt.subplots()
-    for element in mesh.elements:
-        x = mesh.nodes[0, element]
-        y = mesh.nodes[1, element]
-        ax.fill(x,y, facecolor='None', edgecolor='black')
-    ax.scatter(node_x_locations, node_y_locations, color="blue")
-    for i in range(mesh.nodes.shape[1]):
-        ax.annotate(str(i), (node_x_locations[i]+0.02*max_x, node_y_locations[i]+0.02*max_y))
-    for i in range(mesh.elements.shape[0]):
-        ax.annotate(f'Element: {i}', (np.mean(mesh.nodes[0,mesh.elements[i]]), np.mean(mesh.nodes[1,mesh.elements[i]])), ha='center', va='center', color="red")
-    plt.show()
-
-
-
-# # Test code
-# mesh1 = Mesh()
-# mesh1.make_rect_mesh([10,2], [10,2])
-# print('nodes\n', mesh1.nodes)
-# print('elements:\n', mesh1.elements)
-# steel = Material_model([29e6, 0.29], "linear elastic")
-# print('D:\n', steel.D)
-# Kg = Global_K_matrix(mesh1)
-# print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
-# Kg.build(mesh1, steel)
-# # print(Kg.K_global)
 
 # Test code
 mesh1 = Mesh()
-mesh1.make_rect_mesh([1,1], [2,4])
+mesh1.make_rect_mesh([2,1], [2,2])
 print('nodes\n', mesh1.nodes)
 print('elements:\n', mesh1.elements)
-steel = Material_model([29e6, 0.29], "linear elastic")
+steel = Material_model([30e6, 0.30], "linear elastic")
 print('D:\n', steel.D)
 Kg = Global_K_matrix(mesh1)
 print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
 Kg.build(mesh1, steel)
-print(Kg.K_global)
-plot_Mesh(mesh1)
+mesh1.plot()
+
+E = Strain(mesh1)
+E.update(np.random.randn(3,4))
+E.return_all()
