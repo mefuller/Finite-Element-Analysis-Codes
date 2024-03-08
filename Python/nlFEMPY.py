@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as ptch
 
 
-
 def map_DOF(x):
     return x*2, x*2+1
 
@@ -194,49 +193,31 @@ class Elemental_quantity:
 
 class Boundary_condition:
     """Defines a boundary condition for the model."""
-    def __init__(self, DOFs: np.ndarray, values: np.ndarray, Kg: Global_K_matrix):
-        self.DOFs = DOFs
-        self.values = values
-        K = Kg.K_global
-        self.num_DOFs = DOFs.shape[0]
-        self.dim_Kglobal = K.shape[0]
-        self.type = None
-    def create_LagrangeMultipliers(self):
-        """Creates the C and Q matrices necessary for the Langrange multiplier approach."""
-        self.type = "Lagrange multipliers"
-        self.C = np.zeros((self.num_DOFs, self.dim_Kglobal))
-        self.Q = np.zeros((self.num_DOFs, 1))
-        for k in range(self.num_DOFs):
-            self.C[k, self.DOFs[k]] = 1.0
-            self.Q[k, 0] = self.values[k]
-        # do dadlamb = [K C';C zeros(size(C,1))]\[R;Q] in the solver to apply the BC.
-
+    def __init__(self, K_global: Global_K_matrix):
+        K_global = K
 
 class Solver:
     def __init__(self):
         self.output = None
 
-
-## Plot Functions ##
+## Plotting Functions ##
         
 def plot_Mesh(mesh: Mesh):
     node_x_locations = mesh.nodes[0]
     node_y_locations = mesh.nodes[1]
     max_x = np.max(node_x_locations)
     max_y = np.max(node_y_locations)
-    
 
     fig, ax = plt.subplots()
     for element in mesh.elements:
         x = mesh.nodes[0, element]
         y = mesh.nodes[1, element]
-        ax.fill(x, y, facecolor='None', edgecolor='black')
-    ax.scatter(node_x_locations, node_y_locations, color="blue") # Plot nodes
+        ax.fill(x,y, facecolor='None', edgecolor='black')
+    ax.scatter(node_x_locations, node_y_locations, color="blue")
     for i in range(mesh.nodes.shape[1]):
-        ax.annotate(str(i), (node_x_locations[i]+0.02*max_x, node_y_locations[i]+0.02*max_y), ) # Plot node labels
+        ax.annotate(str(i), (node_x_locations[i]+0.02*max_x, node_y_locations[i]+0.02*max_y))
     for i in range(mesh.elements.shape[0]):
-        ax.annotate(f'Element: {i}', (np.mean(mesh.nodes[0,mesh.elements[i]]), np.mean(mesh.nodes[1,mesh.elements[i]])), ha='center', va='center', color="red") # Plot element labels
-    plt.subplots_adjust(top=1.25, right=1.25)
+        ax.annotate(f'Element: {i}', (np.mean(mesh.nodes[0,mesh.elements[i]]), np.mean(mesh.nodes[1,mesh.elements[i]])), ha='center', va='center', color="red")
     plt.show()
 
 
