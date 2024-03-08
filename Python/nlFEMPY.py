@@ -210,23 +210,8 @@ class Elemental_quantity:
 
 class Boundary_condition:
     """Defines a boundary condition for the model."""
-    def __init__(self, DOFs: np.ndarray, values: np.ndarray, Kg: Global_K_matrix):
-        self.DOFs = DOFs
-        self.values = values
-        K = Kg.K_global
-        self.num_DOFs = DOFs.shape[0]
-        self.dim_Kglobal = K.shape[0]
-        self.type = None
-    def create_LagrangeMultipliers(self):
-        """Creates the C and Q matrices necessary for the Langrange multiplier approach."""
-        self.type = "Lagrange multipliers"
-        self.C = np.zeros((self.num_DOFs, self.dim_Kglobal))
-        self.Q = np.zeros((self.num_DOFs, 1))
-        for k in range(self.num_DOFs):
-            self.C[k, self.DOFs[k]] = 1.0
-            self.Q[k, 0] = self.values[k]
-        # do dadlamb = [K C';C zeros(size(C,1))]\[R;Q] in the solver to apply the BC.
-
+    def __init__(self, K_global: Global_K_matrix):
+        K_global = K
 
 class Solver:
     def __init__(self):
