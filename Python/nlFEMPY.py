@@ -1,10 +1,19 @@
+import timeit
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.patches as ptch
+from matplotlib.ticker import MaxNLocator
+from matplotlib.colors import BoundaryNorm
+from matplotlib.cm import ScalarMappable
 
 
 def map_DOF(x):
     return x*2, x*2+1
+
+def Mesher(blocks_nums, voids, merges, corner_points):
+    S_blocks = blocks_nums[0]
+    W_blocks = blocks_nums[1]
+    blocks = np.flip(np.reshape(np.arange(S_blocks*W_blocks), (W_blocks,S_blocks)), 0)
+    sides = 
 
 class Mesh:
     """Mesh object of a meshed region with arrays containing the nodal positions and element numbering."""
@@ -12,6 +21,10 @@ class Mesh:
         self.nodes = None
         self.elements = None
         self.gauss_points = None
+        self.material = None
+
+    def assign_material(self, mat_model: Material_model):
+        self.material = mat_model
 
     def make_rect_mesh(self, size, num_elements):
         """Creates a rectangular meshed region of defined by a width, height, and number of elements per side."""
@@ -83,6 +96,7 @@ class Mesh:
                 output1, output2 = BmatdetJ(self, self.nodes[:, self.elements[elem]], GP[i,:])
                 self.B[:,:, elem*4-(4-i)] = output1
                 self.detJ[elem*4-(4-i)] = output2
+
     def plot(self):
         node_x_locations = self.nodes[0]
         node_y_locations = self.nodes[1]
@@ -108,6 +122,7 @@ class Mesh:
         # plt.subplots_adjust(top=2, right=2, bottom=1.5)
         ax.set_aspect('equal', 'box')
         plt.show()
+
 class Material_model:
     """Material model class object which contains the stiffness matrix, D, and other constitutive matrices.\n
        arguments:\n
@@ -125,90 +140,121 @@ class Material_model:
 
 class Global_K_matrix:
     """The global stiffness matrix object."""
-    def __init__(self, mesh: Mesh):
-        nodes = mesh.nodes
-        elements = mesh.elements
+    def __init__(self, input_mesh: Mesh):
+        self.mesh = input_mesh
+        nodes = self.mesh.nodes
+        elements = self.mesh.elements
         self.K_global = np.zeros((nodes.shape[1]*2, nodes.shape[1]*2))
         self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
         i = 0
         for element in elements:
             self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
             i += 1
-    def build(self, mesh: Mesh, material_model: Material_model):
+    def build(self, mat_model: Material_model):
         """Constructs the global stiffness matrix."""
-        D = material_model.D
-        i = 0
-        for element in mesh.elements:
-            for k in range(4*i,4*i+4):
-                B = mesh.B[:,:,k]
-                weight = mesh.gauss_points[2,k]
-                detJ = mesh.detJ[k]
-                k = B.T@D@B*weight*detJ
-            # Scatter k to Kg
-            index = self.DOF_mapping[i,:]
-            n = 0
-            for position1 in index:
-                m = 0
-                for position2 in index:
-                    self.K_global[position1, position2] = k[n,m]
-                    m += 1
-                n += 1
-            i += 1
+        D = mat_model.D
+        for p in enumerate(self.mesh.elements):
+            gauss_index = np.arange(4*p[0], 4*p[0]+4)
+            index = self.DOF_mapping[p[0],:]
+            for k in gauss_index:
+                B = self.mesh.B[:,:,k]
+                weight = self.mesh.gauss_points[2,k]
+                detJ = self.mesh.detJ[k]
+                k_element = B.T@D@B*weight*detJ
+                for n in enumerate(index):
+                    for m in enumerate(index):
+                        self.K_global[n[1], m[1]] += k_element[n[0],m[0]]
+        self.mesh.assign_material(mat_model)
+
 
 class Global_T_matrix:
     """The global internal nodal force vector."""
-    def __init__(self, mesh: Mesh):
-            nodes = mesh.nodes
-            elements = mesh.elements
-            self.T_global = np.zeros((nodes.shape[1]*2, 1))
+    def __init__(self, input_mesh: Mesh):
+            self.mesh = input_mesh
+            nodes = self.mesh.nodes
+            elements = self.mesh.elements
+            self.T_global = np.zeros(nodes.shape[1]*2)
             self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
             i = 0
             for element in elements:
                 self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
-    def build(self, mesh: Mesh, S):
+    def build(self, S):
         """Constructs the global internal force vector."""
         i = 0
-        for element in mesh.elements.T:
-            for k in range(4*i,4*i+4):
-                B = mesh.B[:,:,k]
-                weight = mesh.gauss_points[2,k]
-                detJ = mesh.detJ[k]
-                t = B.T@S[:,k]*weight*detJ # S is the stress field
-            # Scatter t to Tg !!!! Check this !!!!!
-            index = self.DOF_mapping[i,:]
-            n = 0
-            for position1 in index:
-                self.T_global[position1, 0] = t[n,0]
-                n += 1
+        for p in enumerate(self.mesh.elements):
+            gauss_index = np.arange(4*p[0],4*p[0]+4)
+            for k in gauss_index:
+                B = self.mesh.B[:,:,k]
+                weight = self.mesh.gauss_points[2,k]
+                detJ = self.mesh.detJ[k]
+                t = B.T@S.return_all()[:,k]*weight*detJ # S is the stress field
+                index = self.DOF_mapping[i,:]
+                n = 0
+                for position1 in index:
+                    self.T_global[position1] += t[n]
+                    n += 1
             i += 1
 
 class Global_F_matrix:
     """The global applied nodal force vector."""
-    def __init__(self, mesh: Mesh):
-            nodes = mesh.nodes
-            elements = mesh.elements
-            self.F_global = np.zeros((nodes.shape[1]*2, 1))
+    def __init__(self, input_mesh: Mesh):
+            self.mesh = input_mesh
+            nodes = self.mesh.nodes
+            elements = self.mesh.elements
+            self.F_global = np.zeros(nodes.shape[1]*2)
             self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
             i = 0
             for element in elements:
                 self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
-    def build(self, mesh: Mesh):
+    def build(self, trac_nodes, trac_value, trac_dir):
         """Constructs the global applied force vector."""
+        for k in range(trac_nodes.shape[0]):
+            n1 = trac_nodes[k,0]
+            x1 = self.mesh.nodes[0,n1]
+            y1 = self.mesh.nodes[1,n1]
+            n2 = trac_nodes[k,1]
+            x2 = self.mesh.nodes[0,n2]
+            y2 = self.mesh.nodes[1,n2]
+            len23 = np.sqrt((x2-x1)**2 + (y2-y1)**2)
+            ty = 0
+            tx = 0
+            if trac_dir == 'x':
+                tx = trac_value
+            elif trac_dir == 'y':
+                ty = trac_value
+            self.F_global[n1*2] += tx*len23/2
+            self.F_global[n1*2 + 1] += ty*len23/2
+            self.F_global[n2*2] += tx*len23/2
+            self.F_global[n2*2 + 1] += ty*len23/2
+
+##### Tensor and scalar quantities #####
 
 class Nodal_quantity:
     """An object that stores the values of nodes."""
     def __init__(self, mesh: Mesh, number_of_components: int):
-        length = mesh.nodes.shape[1]
-        num = number_of_components
-        self.values = np.zeros((num, length))
-    def update(self, values):
-        self.values = values
+        self.mesh = mesh
+        self.length = mesh.nodes.shape[1]
+        self.num = number_of_components
+        self.values = np.zeros((self.num, self.length))
+    def update(self, new_values):
+        self.values = new_values
+
+class Displacement(Nodal_quantity):
+    def __init__(self, mesh: Mesh, number_of_components = 2):
+        super().__init__(mesh, number_of_components)
+        self.length = self.length*2
+        self.values = {'U1': np.zeros(self.length), 'U2': np.zeros(self.length)}
+    def update(self, new_values):
+        self.values['U1'], self.values['U2'] = np.array([new_values[range(0,self.length,2)], new_values[range(1,self.length,2)]])
+    def return_all(self):
+        return np.ravel(np.array([self.values['U1'], self.values['U2']]), order='F')
 
 class Elemental_quantity:
     """An object that stores the values of elements at the gauss points."""
     def __init__(self, mesh: Mesh, number_of_components: int):
+        self.mesh = mesh
         self.length = mesh.gauss_points.shape[1]
         self.num = number_of_components
         self.values = np.zeros((self.num, self.length))
@@ -225,6 +271,20 @@ class Stress(Elemental_quantity):
         self.tensor = np.array([self.values['S11'], self.values['S22'], self.values['S12']])
     def update(self, new_values):
         self.values['S11'], self.values['S22'], self.values['S12'] = new_values
+    def compute(self, U):
+        newS = np.zeros((3, self.length))
+        D = self.mesh.material.D
+        for k in enumerate(self.mesh.elements):
+            i = k[0]
+            element = k[1]
+            n1, n2, n3, n4 = element
+            index = [n1*2, n1*2+1, n2*2, n2*2+1, n3*2, n3*2+1, n4*2, n4*2+1]
+            U_element = U[index]
+            gauss_index = np.arange(4*i, 4*i+4)
+            for k in gauss_index:
+                B = self.mesh.B[:,:,k]
+                newS[:, k] = D@B@U_element
+        self.values['S11'], self.values['S22'], self.values['S12'] = newS
     def return_all(self):
         return np.array([self.values['S11'], self.values['S22'], self.values['S12']])
 
@@ -238,6 +298,30 @@ class Strain(Elemental_quantity):
         self.values['E11'], self.values['E22'], self.values['E12'] = new_values
     def return_all(self):
         return np.array([self.values['E11'], self.values['E22'], self.values['E12']])
+    
+class delta_Strain(Elemental_quantity):
+    """Delta strain tensor object."""
+    def __init__(self, mesh: Mesh, number_of_components = 3):
+        super().__init__(mesh, number_of_components)
+        self.values = {'dE11': np.zeros(self.length), 'dE22': np.zeros(self.length), 'dE12': np.zeros(self.length)}
+        self.tensor = np.array([self.values['dE11'], self.values['dE22'], self.values['dE12']])
+    def update(self, new_values):
+        self.values['dE11'], self.values['dE22'], self.values['dE12'] = new_values
+    def compute(self, delU):
+        delE = np.zeros((3, self.length))
+        for k in enumerate(self.mesh.elements):
+            i = k[0]
+            element = k[1]
+            n1, n2, n3, n4 = element
+            index = [n1*2, n1*2+1, n2*2, n2*2+1, n3*2, n3*2+1, n4*2, n4*2+1]
+            delU_element = delU[index]
+            gauss_index = np.arange(4*i, 4*i+4)
+            for k in gauss_index:
+                B = self.mesh.B[:,:,k]
+                delE[:, k] = B@delU_element
+        self.values['dE11'], self.values['dE22'], self.values['dE12'] = delE     
+    def return_all(self):
+        return np.array([self.values['dE11'], self.values['dE22'], self.values['dE12']])
 
 class Boundary_condition:
     """Defines a boundary condition for the model."""
@@ -245,36 +329,103 @@ class Boundary_condition:
         self.DOFs = DOFs
         self.values = values
         K = Kg.K_global
-        self.num_DOFs = DOFs.shape[0]
+        self.num_DOFs = len(DOFs)
         self.dim_Kglobal = K.shape[0]
         self.type = None
-    def create_LagrangeMultipliers(self):
+    # def create_LagrangeMultipliers(self):
         """Creates the C and Q matrices necessary for the Langrange multiplier approach."""
         self.type = "Lagrange multipliers"
         self.C = np.zeros((self.num_DOFs, self.dim_Kglobal))
-        self.Q = np.zeros((self.num_DOFs, 1))
+        self.Q = np.zeros(self.num_DOFs)
         for k in range(self.num_DOFs):
             self.C[k, self.DOFs[k]] = 1.0
-            self.Q[k, 0] = self.values[k]
-        # do dadlamb = [K C';C zeros(size(C,1))]\[R;Q] in the solver to apply the BC.global: Global_K_matrix):
+            self.Q[k] = self.values[k]
 
 class Solver:
-    def __init__(self):
-        self.output = None
+    def __init__(self, solver_type):
+        self.type = solver_type
+
+class Standard(Solver):
+    def __init__(self, Kg: Global_K_matrix, Tg: Global_T_matrix, Fg: Global_F_matrix, BC: Boundary_condition, 
+                 S: Stress, E: Strain, U: Displacement):
+        self.K = Kg.K_global
+        self.F = Fg.F_global
+        self.T = Tg.T_global
+        self.BC = BC
+        self.S = S
+        self.E = E
+        self.U = U
+        # self.delS = delS
+        # self.delE = delE
+        # self.delq = delq
+        # self.dq = dq
+    def start(self):
+        # Construct the problem [K C';C zeros(size(C,1))]\[R;Q]
+        R = self.F - self.T
+        Q = self.BC.Q
+
+        a = np.block([[self.K, self.BC.C.T],
+                 [self.BC.C, np.zeros((self.BC.C.shape[0], self.BC.C.shape[0]))]])
+        b = np.append(R, Q.T)
+
+        c = np.linalg.solve(a, b)
+        self.U.update(c[0:self.K.shape[0]])
+        print('Solve complete.')
+
+def plot_result(mesh: Mesh, result, component: str, deformed=True, U=U):
+    fig, ax = plt.subplots()
+    zmin = result.values[component].min()
+    zmax = result.values[component].max()
+    levels = MaxNLocator(nbins=10).tick_values(zmin, zmax)
+    cmap = plt.colormaps['gist_rainbow_r']
+    norm = BoundaryNorm(levels, ncolors=cmap.N, extend='both')
+    if deformed == True:
+        node_positions_x = mesh.nodes[0,:] + U.values['U1']
+        node_positions_y = mesh.nodes[1,:] + U.values['U2']
+    else:
+        node_positions_x = mesh.nodes[0,:]
+        node_positions_y = mesh.nodes[1,:]
+    for element in enumerate(mesh.elements):
+        x1, x2, x3, x4 = node_positions_x[element[1]]
+        y1, y2, y3, y4 = node_positions_y[element[1]]
+        X = [[x4, x3], [x1, x2]]
+        Y = [[y4, y3], [y1, y2]]
+        Z = np.array([[ np.mean(result.values[component][element[0]*4:element[0]*4+4]) ]])
+        im = ax.pcolormesh(X, Y, Z, edgecolor='black', cmap=cmap, norm=norm)
+    fig.colorbar(im, ticks=levels, drawedges=True, extend='both', extendrect=True)
+    ax.set_title(component)
+    plt.show()
+
 
 
 # Test code
+start = timeit.default_timer()
+
 mesh1 = Mesh()
-mesh1.make_rect_mesh([2,1], [2,2])
+mesh1.make_rect_mesh([1,1], [2,2])
 print('nodes\n', mesh1.nodes)
 print('elements:\n', mesh1.elements)
 steel = Material_model([30e6, 0.30], "linear elastic")
-print('D:\n', steel.D)
-Kg = Global_K_matrix(mesh1)
-print('Kg.DOF_mapping:\n',Kg.DOF_mapping)
-Kg.build(mesh1, steel)
+K = Global_K_matrix(mesh1)
+K.build(steel)
 mesh1.plot()
 
 E = Strain(mesh1)
-E.update(np.random.randn(3,4))
-E.return_all()
+dE = delta_Strain(mesh1)
+S = Stress(mesh1)
+U = Displacement(mesh1)
+T = Global_T_matrix(mesh1)
+F = Global_F_matrix(mesh1)
+F.build(np.array([[7, 8]]), 150e3, 'y')
+BC1 = Boundary_condition([0,1], [0, 0, 0, 0], K)
+solution = Standard(K,T,F,BC1,S,E,U)
+solution.start()
+
+stop = timeit.default_timer()
+print('Elapsed time: ', f'{stop-start} seconds.')
+
+dE.compute(U.return_all())
+S.compute(U.return_all())
+plot_result(mesh1, S, 'S22')
+plot_result(mesh1, S, 'S11')
+plot_result(mesh1, S, 'S12')
