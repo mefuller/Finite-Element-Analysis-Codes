@@ -9,11 +9,144 @@ from matplotlib.cm import ScalarMappable
 def map_DOF(x):
     return x*2, x*2+1
 
-def Mesher(blocks_nums, voids, merges, corner_points):
-    S_blocks = blocks_nums[0]
-    W_blocks = blocks_nums[1]
-    blocks = np.flip(np.reshape(np.arange(S_blocks*W_blocks), (W_blocks,S_blocks)), 0)
-    sides = 
+def gather_index(a, b):
+    """return index pairs between index locations a and b, including a, b."""
+    a1, a2 = a
+    b1, b2 = b
+    c = np.max(abs(np.array(a)-np.array(b))) + 1 # +1 to include last pair
+    output = [None]*c
+    if a1 == b1 and a2 < b2:
+        for i in enumerate(output):
+            output[i[0]] = [a1, a2 + i[0]]
+    elif a1 == b1 and a2 > b2:
+        for i in enumerate(output):
+            output[i[0]] = [a1, a2 - i[0]]
+    elif a2 == b2 and a1 < b1:
+        for i in enumerate(output):
+            output[i[0]] = [a1 + i[0], a2]
+    elif a2 == b2 and a1 > b1:
+        for i in enumerate(output):
+            output[i[0]] = [a1 - i[0], a2]
+    else:
+        raise Exception('Input arrays must share 1 common values.')
+    return output
+
+def xy_shape(xieta, xy):
+    """Takes in the local coordinate [xi,eta] and the node points [x,y]_i
+      of a 8 noded isoparametric element.
+      Returns the position in [x,y]"""
+    xi = xieta[0]
+    eta = xieta[1]
+    N = np.zeros(8)
+    x = xy[0]
+    y = xy[1]
+    N[0] = -(1 - xi)*(1 - eta)*(1 + xi + eta)/4
+    N[1] = -(1 + xi)*(1 - eta)*(1 - xi + eta)/4
+    N[2] = -(1 + xi)*(1 + eta)*(1 - xi - eta)/4
+    N[3] = -(1 - xi)*(1 + eta)*(1 + xi - eta)/4
+    N[4] = (1 - xi**2)*(1 - eta)/2
+    N[5] = (1 + xi)*(1 - eta**2)/2
+    N[6] = (1 - xi**2)*(1 + eta)/2
+    N[7] = (1 - xi)*(1 - eta**2)/2
+    return np.array([np.dot(N,x), np.dot(N,y)])
+
+class Mesher:
+    def __init__(self):
+        pass
+    def create(self, blocks_nums, div_nums, void = None, merge = None):
+        NS = blocks_nums[0] #number of blocks in S direction
+        NW = blocks_nums[1] #number of blocks in W direction
+        NSW = NS*NW #total number of blocks
+
+        NSD = div_nums[0] #array containing number of divisions in each block in S
+        NWD = div_nums[1] #array containing number of divisions in each block in W
+
+        NNS = 1 + np.sum(NSD) #total nodes along S
+        NNW = 1 + np.sum(NWD) #toal nodes along W
+
+        NNT = NNS*NNW #total number of nodes
+
+        NNAR = np.zeros((NNS,NNW)) #initialize node list with zeros
+
+        # Loop through and set -1 to all blocks not set to void
+        BLOCKID = 0
+        WPLACE = 0
+        for KW in range(NW):
+            SPLACE = 0
+            for KS in range(NS):
+                if BLOCKID in void:
+                    pass
+                else:
+                    NNAR[SPLACE : SPLACE + NSD[KS] + 1, WPLACE : WPLACE + NWD[KW] + 1 ] = -1
+                SPLACE += NSD[KS]
+                BLOCKID += 1
+            WPLACE += NWD[KW]
+        print(NNAR)
+
+        # Create a map of the corner points
+        self.MAP = np.reshape(list(range((NS + 1)*(NW + 1))),(NS + 1, NW + 1))
+
+        # Create an array indicating the indices of corner points of each block
+        indexW = [0]
+        WPLACE = 0
+        indexS = [0]
+        SPLACE = 0
+        for k in NWD:
+            WPLACE += k
+            indexW.append(WPLACE)
+        for p in NSD:
+            SPLACE += p
+            indexS.append(SPLACE)
+        X, Y = np.meshgrid(indexS, indexW)
+        self.POS = [None]*len(np.ravel(X))
+        for i in range(len(np.ravel(X))):
+            self.POS[i] = [np.ravel(X)[i], np.ravel(Y)[i]]
+        # print(self.POS)
+
+        # Set merge nodes
+        if merge != None:
+            for pair in merge:
+                # get node numbers of nodes on merge lists
+                line1 = pair[0:2]
+                line2 = pair[2:4]
+                # print(line1,line2)
+                # print(self.POS[line1[0]], self.POS[line1[1]])
+                # Convert nodes to lists of index positions to be merged
+                line1 = np.array(gather_index(self.POS[line1[0]], self.POS[line1[1]]))
+                # print(line1)
+                # print(self.POS[line2[0]], self.POS[line2[1]])
+                line2 = np.array(gather_index(self.POS[line2[0]], self.POS[line2[1]]))
+                # print(line2)
+                # print(np.max(line1[:,0])>np.max(line2[:,0]))
+                # Find the line with the highest node number and conver that to the lower node numbers
+                if np.max(line1[:,0]) < np.max(line2[:,0]):
+                    for point in enumerate(line1):
+                        # print(point)
+                        # print(line2[point[0]])
+                        node_num = np.ravel_multi_index(line2[point[0]], NNAR.shape, order="F")
+                        NNAR[point[1][0], point[1][1]] = node_num
+                else:
+                    for point in enumerate(line2):
+                        node_num = np.ravel_multi_index(line1[point[0]], NNAR.shape, order="F")
+                        NNAR[point[1][0], point[1][1]] = node_num
+                print(NNAR)
+        # Assign final node numbers
+        DUMMY = np.zeros(NNT)
+        NCOUNT = 0
+        for node in enumerate(np.ravel(NNAR, order="F")):
+            if node[1] < 0:
+                DUMMY[node[0]] = NCOUNT # Assign the node number according to sequence
+                NCOUNT += 1
+            elif node[1] > 0:
+                DUMMY[node[0]] = node[1] # Assign the merged node number
+                if node[1] == NCOUNT:
+                    NCOUNT += 1
+            else:
+                pass
+        NNAR = np.reshape(DUMMY, NNAR.shape, order="F")
+        print(NNAR)
+
+
 
 class Mesh:
     """Mesh object of a meshed region with arrays containing the nodal positions and element numbering."""
@@ -23,7 +156,7 @@ class Mesh:
         self.gauss_points = None
         self.material = None
 
-    def assign_material(self, mat_model: Material_model):
+    def assign_material(self, mat_model):
         self.material = mat_model
 
     def make_rect_mesh(self, size, num_elements):
@@ -372,7 +505,7 @@ class Standard(Solver):
         self.U.update(c[0:self.K.shape[0]])
         print('Solve complete.')
 
-def plot_result(mesh: Mesh, result, component: str, deformed=True, U=U):
+def plot_result(mesh: Mesh, result, component: str, U, deformed=True):
     fig, ax = plt.subplots()
     zmin = result.values[component].min()
     zmax = result.values[component].max()
@@ -408,7 +541,7 @@ print('elements:\n', mesh1.elements)
 steel = Material_model([30e6, 0.30], "linear elastic")
 K = Global_K_matrix(mesh1)
 K.build(steel)
-mesh1.plot()
+# mesh1.plot()
 
 E = Strain(mesh1)
 dE = delta_Strain(mesh1)
@@ -426,6 +559,10 @@ print('Elapsed time: ', f'{stop-start} seconds.')
 
 dE.compute(U.return_all())
 S.compute(U.return_all())
-plot_result(mesh1, S, 'S22')
-plot_result(mesh1, S, 'S11')
-plot_result(mesh1, S, 'S12')
+# plot_result(mesh1, S, 'S22', U=U)
+# plot_result(mesh1, S, 'S11', U=U)
+# plot_result(mesh1, S, 'S12', U=U)
+
+mesher1 = Mesher()
+mesher1.create([2,2], [[2,2],[3,2]], [3], [[4,7,4,5]])
+print(xy_shape([0,0], [[0,2,2,0,1,2,1,0], [0,0,4,4,0,2,4,2]]))
