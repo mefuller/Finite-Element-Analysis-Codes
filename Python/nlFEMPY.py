@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import BoundaryNorm
-from matplotlib.cm import ScalarMappable
 
 
 def map_DOF(x):
@@ -31,15 +30,15 @@ def gather_index(a, b):
         raise Exception('Input arrays must share 1 common values.')
     return output
 
-def xy_shape(xieta, xy):
+def xy_shape8N(xieta, xy):
     """Takes in the local coordinate [xi,eta] and the node points [x,y]_i
       of a 8 noded isoparametric element.
       Returns the position in [x,y]"""
     xi = xieta[0]
     eta = xieta[1]
     N = np.zeros(8)
-    x = xy[0]
-    y = xy[1]
+    x = xy[0,:]
+    y = xy[1,:]
     N[0] = -(1 - xi)*(1 - eta)*(1 + xi + eta)/4
     N[1] = -(1 + xi)*(1 - eta)*(1 - xi + eta)/4
     N[2] = -(1 + xi)*(1 + eta)*(1 - xi - eta)/4
@@ -53,20 +52,73 @@ def xy_shape(xieta, xy):
 class Mesher:
     def __init__(self):
         pass
-    def create(self, blocks_nums, div_nums, void = None, merge = None):
-        NS = blocks_nums[0] #number of blocks in S direction
-        NW = blocks_nums[1] #number of blocks in W direction
+
+    def coords_quarterCircle(self, r):
+        """Returns the block coordinates for a 90deg circular sector.  Input radius, r.
+        Output is a 3D array in the form of [xy, point number, block number]"""
+        block0 = np.array([[0, r/2, r/2, 0, r/4, r/2, r/4, 0],
+                            [0, 0, r/2, r/2, 0, r/4, r/2, r/4]])
+
+        block1 = np.array([[r/2, r, r/np.sqrt(2), r/2, r*3/4, r*np.cos(np.pi/8), r*(1+np.sqrt(2))/4, r/2],
+                            [0, 0, r/np.sqrt(2), r/2, 0, r*np.sin(np.pi/8), r*(1+np.sqrt(2))/4, r/4]])
+
+        block2 = np.array([[0, r/2, r/np.sqrt(2), 0, r/4, r*(1+np.sqrt(2))/4, r*np.cos(np.pi*3/8), 0],
+                            [r/2, r/2, r/np.sqrt(2), r, r/2, r*(1+np.sqrt(2))/4, r*np.sin(np.pi*3/8), r*3/4]])
+       
+        output = np.zeros((2,8,3))
+        output[:,:,0] = block0
+        output[:,:,1] = block1
+        output[:,:,2] = block2
+        return output
+    
+    def coords_Quad(self, w, h):
+        """Returns block coordinates for a quadrilaterial of width w and height h."""
+        output = np.zeros((2,8,1))
+        block0 = np.array([[0, w, w, 0, w/2, w, w/2, 0],
+                            [0, 0, h, h, 0, h/2, h, h/2]])
+        output[:,:,0] = block0
+        return output
+    
+    def set_params(self, blocks_nums, div_nums, blocks_coords, void = [], merge = [[]]):
+        self.blocks_nums = np.array(blocks_nums)
+        self.div_nums = np.array(div_nums)
+        self.void = void
+        if len(np.shape(merge)) == 2 or merge == None:
+            self.merge = merge
+        else:
+            raise Exception('merge must be array of dimension 2.')
+        if len(np.shape(blocks_coords)) == 3:
+            self.blocks_coords = np.array(blocks_coords)
+        else:
+            raise Exception('blocks_coords must be array of dimension 3.')
+
+    def create(self):
+        NS = self.blocks_nums[0] #number of blocks in S direction
+        NW = self.blocks_nums[1] #number of blocks in W direction
         NSW = NS*NW #total number of blocks
 
-        NSD = div_nums[0] #array containing number of divisions in each block in S
-        NWD = div_nums[1] #array containing number of divisions in each block in W
+        NSD = self.div_nums[0] #array containing number of divisions in each block in S
+        NWD = self.div_nums[1] #array containing number of divisions in each block in W
 
+        #Count total number of elements not including void blocks
+        BLOCKID = 0
+        self.num_elements = 0
+        for KW in range(NW):
+            for KS in range(NS):
+                if BLOCKID in self.void:
+                    pass
+                else:
+                    self.num_elements += NSD[KS]*NWD[KW]
+                BLOCKID += 1
         NNS = 1 + np.sum(NSD) #total nodes along S
         NNW = 1 + np.sum(NWD) #toal nodes along W
 
         NNT = NNS*NNW #total number of nodes
 
-        NNAR = np.zeros((NNS,NNW)) #initialize node list with zeros
+        # NNAR = np.zeros((NNS,NNW)) #initialize node list with zeros
+        NNAR = np.full((NNS,NNW), None)
+        NX = np.full((NNS,NNW), None) #initialize nodal x coordinate list with None
+        NY = np.full((NNS,NNW), None) # "" y coordinate list with None
 
         # Loop through and set -1 to all blocks not set to void
         BLOCKID = 0
@@ -74,17 +126,17 @@ class Mesher:
         for KW in range(NW):
             SPLACE = 0
             for KS in range(NS):
-                if BLOCKID in void:
+                if BLOCKID in self.void:
                     pass
                 else:
                     NNAR[SPLACE : SPLACE + NSD[KS] + 1, WPLACE : WPLACE + NWD[KW] + 1 ] = -1
                 SPLACE += NSD[KS]
                 BLOCKID += 1
             WPLACE += NWD[KW]
-        print(NNAR)
+        # print(NNAR)
 
         # Create a map of the corner points
-        self.MAP = np.reshape(list(range((NS + 1)*(NW + 1))),(NS + 1, NW + 1))
+        self.MAPPER = np.reshape(list(range((NS + 1)*(NW + 1))), (NS + 1, NW + 1), order='F')
 
         # Create an array indicating the indices of corner points of each block
         indexW = [0]
@@ -104,8 +156,8 @@ class Mesher:
         # print(self.POS)
 
         # Set merge nodes
-        if merge != None:
-            for pair in merge:
+        if self.merge != [[]]:
+            for pair in self.merge:
                 # get node numbers of nodes on merge lists
                 line1 = pair[0:2]
                 line2 = pair[2:4]
@@ -129,12 +181,16 @@ class Mesher:
                     for point in enumerate(line2):
                         node_num = np.ravel_multi_index(line1[point[0]], NNAR.shape, order="F")
                         NNAR[point[1][0], point[1][1]] = node_num
-                print(NNAR)
+                # print(NNAR)
+
         # Assign final node numbers
-        DUMMY = np.zeros(NNT)
+        DUMMY = np.full(NNT, None)
         NCOUNT = 0
         for node in enumerate(np.ravel(NNAR, order="F")):
-            if node[1] < 0:
+            self.maxnode = NCOUNT
+            if node[1] == None:
+                pass
+            elif node[1] < 0:
                 DUMMY[node[0]] = NCOUNT # Assign the node number according to sequence
                 NCOUNT += 1
             elif node[1] > 0:
@@ -144,9 +200,69 @@ class Mesher:
             else:
                 pass
         NNAR = np.reshape(DUMMY, NNAR.shape, order="F")
-        print(NNAR)
+        # print('final',NNAR)
 
+        # Move through NNAR and create elements
+        self.elements = np.zeros((self.num_elements,4), int)
+        WPLACE = 0
+        EPLACE = 0
+        BLOCKID = 0
+        for KW in range(NW):
+            SPLACE = 0
+            for KS in range(NS):
+                if BLOCKID in self.void:
+                    pass
+                else:
+                    BLOCKNODES = NNAR[SPLACE : SPLACE + NSD[KS] + 1, WPLACE : WPLACE + NWD[KW] + 1 ]
+                    # print(BLOCKNODES.shape)
+                    for y in range(BLOCKNODES.shape[1]-1):
+                        for x in range(BLOCKNODES.shape[0]-1):
+                            nodelist = [BLOCKNODES[x,y],
+                                     BLOCKNODES[x+1,y],
+                                     BLOCKNODES[x+1,y+1],
+                                     BLOCKNODES[x,y+1]]
+                            self.elements[EPLACE,:] = nodelist
+                            EPLACE += 1
+                SPLACE += NSD[KS]
+                BLOCKID += 1
+            WPLACE += NWD[KW]
 
+        #First make [xi,eta] coordinates for every node then assign
+        # [x,y] cordinates to each node of each block.
+        BLOCKID = 0
+        WPLACE = 0
+        for KW in range(NW):
+            SPLACE = 0
+            for KS in range(NS):
+                if BLOCKID in self.void:
+                    pass
+                else:
+                    # print('NSD[KS]', NSD[KS])
+                    # print('NWD[KW]', NWD[KW])
+                    xi, eta = np.meshgrid(np.linspace(-1, 1, NSD[KS] + 1), np.linspace(-1, 1, NWD[KW] + 1)) #create mesh grid of xi and eta points
+                    # print('xi shape:', xi.shape)
+                    # print('eta shape:', eta.shape)
+                    xi_and_eta = np.vstack((np.ravel(xi), np.ravel(eta))) # ravel and stack xi over eta
+                    xy = np.zeros((len(np.ravel(xi)), 2)) # pre-make an array to hold the xy coords of each xi, eta pair.
+                    for point in enumerate(xi_and_eta.T):
+                        xy[point[0],:] = xy_shape8N(point[1], self.blocks_coords[:,:, BLOCKID]) # create the xy coord
+                    X = np.reshape(xy[:,0], xi.T.shape, order='F') # make a 2D array of just x coordinates
+                    Y = np.reshape(xy[:,1], eta.T.shape, order='F') # make a 2D array of just y coordinates
+                    # move through the whole mesh and place coordintes in NX and NY arrays
+                    NX[SPLACE : SPLACE + NSD[KS] + 1, WPLACE : WPLACE + NWD[KW] + 1 ] = X 
+                    NY[SPLACE : SPLACE + NSD[KS] + 1, WPLACE : WPLACE + NWD[KW] + 1 ] = Y 
+                SPLACE += NSD[KS]
+                BLOCKID += 1
+            WPLACE += NWD[KW]
+
+        self.nodes = np.zeros((2, self.maxnode+1)) # make an object to hold the x,y coordinates of the whole mesh in a 2Xnum_nodes size
+
+        for y in range(NNAR.shape[1]):
+            for x in range(NNAR.shape[0]):
+                # assign node position values only from node number entries that aren't None
+                if NNAR[x,y] != None:
+                    self.nodes[0,NNAR[x,y]] = NX[x,y]
+                    self.nodes[1,NNAR[x,y]] = NY[x,y]
 
 class Mesh:
     """Mesh object of a meshed region with arrays containing the nodal positions and element numbering."""
@@ -159,35 +275,17 @@ class Mesh:
     def assign_material(self, mat_model):
         self.material = mat_model
 
-    def make_rect_mesh(self, size, num_elements):
-        """Creates a rectangular meshed region of defined by a width, height, and number of elements per side."""
-        x_length = size[0]
-        y_length = size[1]
-        num_elements_x = num_elements[0]
-        num_elements_y = num_elements[1]
+    def make_mesh(self, mesher: Mesher):
+        """Creates a mesh based on parameter objects from a Mesher object."""
+        
+        self.nodes = mesher.nodes
+        self.elements = mesher.elements
 
-        # Pre-size matrices
-        num_nodes = (num_elements_x + 1)*(num_elements_y + 1)
-        self.nodes = np.zeros((2, num_nodes*num_nodes), dtype='float')
-        self.elements = np.zeros(((num_elements_x)*(num_elements_y), 4), dtype='int')
-
-        #make x and y coordinates
-        x_coordinates = np.linspace(0.0, x_length, num_elements_x + 1)
-        y_coordinates = np.linspace(0.0, y_length, num_elements_y + 1)
-        x_locations, y_locations = np.meshgrid(x_coordinates, y_coordinates, indexing='xy')
-
-        self.nodes = np.stack((np.ndarray.flatten(x_locations), np.ndarray.flatten(y_locations)))
-
-        k = 0 #Create list of elements with their node numbers.
-        for j in range(num_elements_y):
-            for i in range(num_elements_x):
-                self.elements[k, :] = np.array([i+j*(num_elements_x+1), (i+1)+(j*(num_elements_x+1)), (i+1)+(j+1)*(num_elements_x+1), (i)+(j+1)*(num_elements_x+1)], dtype='int')
-                k += 1
         # Create the gauss points for each element and store in self.gauss_points.  The integration rule used is 2X2.    
-        GP = np.array([[-1/np.sqrt(3), -1/np.sqrt(3), 1],
-                       [1/np.sqrt(3), -1/np.sqrt(3), 1], 
-                       [1/np.sqrt(3), 1/np.sqrt(3), 1],
-                       [-1/np.sqrt(3), 1/np.sqrt(3), 1]])
+        GP = np.array([[-1/np.sqrt(3), -1/np.sqrt(3), 1.0],
+                       [1/np.sqrt(3), -1/np.sqrt(3), 1.0], 
+                       [1/np.sqrt(3), 1/np.sqrt(3), 1.0],
+                       [-1/np.sqrt(3), 1/np.sqrt(3), 1.0]])
         
         N = np.zeros((8,8))
         for i in range(0,4):
@@ -197,7 +295,7 @@ class Mesh:
                                [ 0,  (1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta)]]
 
         num_elements = self.elements.shape[0]
-        Q = self.nodes[:, self.elements.ravel(order='F')]
+        Q = self.nodes[:, self.elements.ravel(order='C')]
         Q = np.reshape(Q, (8, num_elements), order='F')
         self.gps = np.reshape(N@Q, (2, num_elements*4), order='F')
         self.gauss_points = np.vstack((self.gps, np.tile(GP[:,2].T, [1, num_elements])))
@@ -207,7 +305,7 @@ class Mesh:
             """Computes the B matrices and value of the Jacobian determinates for each element and guass point."""
             xi, eta = loc[0:2]
             x1, x2, x3, x4, y1, y2, y3, y4 = np.ravel(x)
-            Jac = 1/4*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
+            Jac = 1./4.*np.array([[-(1-eta)*x1 + (1-eta)*x2 + (1+eta)*x3 - (1+eta)*x4, -(1-eta)*y1 + (1-eta)*y2 + (1+eta)*y3 - (1+eta)*y4],
                                   [-(1-xi)*x1 - (1+xi)*x2 + (1+xi)*x3 + (1-xi)*x4, -(1-xi)*y1 - (1+xi)*y2 + (1+xi)*y3 + (1-xi)*y4]])
             J11 = Jac[0,0]
             J12 = Jac[0,1]
@@ -215,7 +313,7 @@ class Mesh:
             J22 = Jac[1,1]
             detJ = J11*J22-J12*J21
             A = (1.0/detJ)*np.array([[J22, -J12, 0., 0.], [0., 0., -J21, J11], [-J21, J11, J22, -J12]])
-            G = (1/4)*np.array([[-(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta), 0],
+            G = (1./4.)*np.array([[-(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta), 0],
                     [-(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi), 0],
                     [0, -(1-eta), 0, (1-eta), 0, (1+eta), 0, -(1+eta)],
                     [0, -(1-xi), 0, -(1+xi), 0, (1+xi), 0, (1-xi)]])
@@ -223,12 +321,11 @@ class Mesh:
             return Bmat, detJ
         self.B = np.zeros((3,8,num_elements*4))
         self.detJ = np.zeros(num_elements*4)
-        for elem in range(num_elements):
+        for elem in enumerate(self.elements):
             for i in range(4):
-                # output1, output2 = BmatdetJ(self, np.reshape(self.nodes[:, self.elements[:, elem]], (8, 1), order='F'), GP[i,:])
-                output1, output2 = BmatdetJ(self, self.nodes[:, self.elements[elem]], GP[i,:])
-                self.B[:,:, elem*4-(4-i)] = output1
-                self.detJ[elem*4-(4-i)] = output2
+                output1, output2 = BmatdetJ(self, self.nodes[:, elem[1]], GP[i,:])
+                self.B[:,:, elem[0]*4+(i)] = output1
+                self.detJ[elem[0]*4+(i)] = output2
 
     def plot(self):
         node_x_locations = self.nodes[0]
@@ -243,15 +340,15 @@ class Mesh:
             ax.fill(x,y, facecolor='None', edgecolor='black')
         ax.scatter(node_x_locations, node_y_locations, color="black")
         for i in range(self.nodes.shape[1]):
-            ax.annotate('node: '+str(i), (node_x_locations[i]+0.02*max_x, node_y_locations[i]+0.12*max_y))
+            ax.annotate('n: '+str(i), (node_x_locations[i]+0.01*max_x, node_y_locations[i]+0.02*max_y))
 
-            plt.arrow(node_x_locations[i], node_y_locations[i], 0.04*np.mean([max_x, max_y]), 0, width=0.01, color='green')
-            ax.annotate(str(i*2), (node_x_locations[i]+0.04*max_x, node_y_locations[i] + 0.04*max_y), color='green')
-
-            plt.arrow(node_x_locations[i], node_y_locations[i], 0, 0.04*np.mean([max_x, max_y]), width=0.01, color='orange')
-            ax.annotate(str(i*2+1), (node_x_locations[i]-0.04*max_x, node_y_locations[i] + 0.04*max_y), color='orange')
+            # plt.arrow(node_x_locations[i], node_y_locations[i], 0.04*np.mean([max_x, max_y]), 0, width=0.01, color='green')
+            # ax.annotate(str(i*2), (node_x_locations[i]+0.04*max_x, node_y_locations[i] + 0.04*max_y), color='green')
+            # plt.arrow(node_x_locations[i], node_y_locations[i], 0, 0.04*np.mean([max_x, max_y]), width=0.01, color='orange')
+            # ax.annotate(str(i*2+1), (node_x_locations[i]-0.04*max_x, node_y_locations[i] + 0.04*max_y), color='orange')
+        
         for i in range(self.elements.shape[0]):
-            ax.annotate(f'Element: {i}', (np.mean(self.nodes[0, self.elements[i]]), np.mean(self.nodes[1, self.elements[i]])), ha='center', va='center', color="red")
+            ax.annotate(f'El: {i}', (np.mean(self.nodes[0, self.elements[i]]), np.mean(self.nodes[1, self.elements[i]])), ha='center', va='center', color="red")
         # plt.subplots_adjust(top=2, right=2, bottom=1.5)
         ax.set_aspect('equal', 'box')
         plt.show()
@@ -266,10 +363,15 @@ class Material_model:
        """
     def __init__(self, model_inputs: float, model_type: str):
         self.type = model_type
-        if self.type == "linear elastic":
+        self.inputs = model_inputs
+        if self.type == "linear elastic, plane stress":
             E = model_inputs[0]
             nu = model_inputs[1]
             self.D = E/(1-nu**2)*np.array([[1, nu, 0.0], [nu, 1.0, 0.0], [0.0, 0.0, 0.5*(1.0-nu)]])
+        if self.type == "linear elastic, plane strain":
+            E = model_inputs[0]
+            nu = model_inputs[1]
+            self.D = E/((1 + nu)*(1 - 2*nu))*np.array([[1.0 - nu, nu, 0.0], [nu, 1.0 - nu, 0.0], [0.0, 0.0, (1.0 - 2*nu)/2.0]])
 
 class Global_K_matrix:
     """The global stiffness matrix object."""
@@ -459,6 +561,8 @@ class delta_Strain(Elemental_quantity):
 class Boundary_condition:
     """Defines a boundary condition for the model."""
     def __init__(self, DOFs: np.ndarray, values: np.ndarray, Kg: Global_K_matrix):
+        if len(DOFs) != len(values):
+            raise Exception('DOF and value inputs for boundary condition must be the same length.')
         self.DOFs = DOFs
         self.values = values
         K = Kg.K_global
@@ -502,6 +606,8 @@ class Standard(Solver):
         b = np.append(R, Q.T)
 
         c = np.linalg.solve(a, b)
+        print(c)
+        print(len(c))
         self.U.update(c[0:self.K.shape[0]])
         print('Solve complete.')
 
@@ -510,7 +616,7 @@ def plot_result(mesh: Mesh, result, component: str, U, deformed=True):
     zmin = result.values[component].min()
     zmax = result.values[component].max()
     levels = MaxNLocator(nbins=10).tick_values(zmin, zmax)
-    cmap = plt.colormaps['gist_rainbow_r']
+    cmap = plt.colormaps['plasma']
     norm = BoundaryNorm(levels, ncolors=cmap.N, extend='both')
     if deformed == True:
         node_positions_x = mesh.nodes[0,:] + U.values['U1']
@@ -534,14 +640,19 @@ def plot_result(mesh: Mesh, result, component: str, U, deformed=True):
 # Test code
 start = timeit.default_timer()
 
+mesher1 = Mesher()
+# mesher1.set_params([2,2], [[2,2], [2,2]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]])
+mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(100,100))
+mesher1.create()
+
+mesher1.nodes[:,4] = np.array([[60, 20]])
+
 mesh1 = Mesh()
-mesh1.make_rect_mesh([1,1], [2,2])
-print('nodes\n', mesh1.nodes)
-print('elements:\n', mesh1.elements)
-steel = Material_model([30e6, 0.30], "linear elastic")
+mesh1.make_mesh(mesher1)
+steel = Material_model([30e6, 0.30], "linear elastic, plane strain")
 K = Global_K_matrix(mesh1)
 K.build(steel)
-# mesh1.plot()
+mesh1.plot()
 
 E = Strain(mesh1)
 dE = delta_Strain(mesh1)
@@ -549,8 +660,8 @@ S = Stress(mesh1)
 U = Displacement(mesh1)
 T = Global_T_matrix(mesh1)
 F = Global_F_matrix(mesh1)
-F.build(np.array([[7, 8]]), 150e3, 'y')
-BC1 = Boundary_condition([0,1], [0, 0, 0, 0], K)
+F.build(np.array([[8,5],[5,2]]), 100, 'x')
+BC1 = Boundary_condition([ 1,  3,  5,  0,  6, 12], [0, 0, 0, 0, 0, 0], K)
 solution = Standard(K,T,F,BC1,S,E,U)
 solution.start()
 
@@ -559,10 +670,6 @@ print('Elapsed time: ', f'{stop-start} seconds.')
 
 dE.compute(U.return_all())
 S.compute(U.return_all())
-# plot_result(mesh1, S, 'S22', U=U)
-# plot_result(mesh1, S, 'S11', U=U)
-# plot_result(mesh1, S, 'S12', U=U)
-
-mesher1 = Mesher()
-mesher1.create([2,2], [[2,2],[3,2]], [3], [[4,7,4,5]])
-print(xy_shape([0,0], [[0,2,2,0,1,2,1,0], [0,0,4,4,0,2,4,2]]))
+plot_result(mesh1, S, 'S22', U=U)
+plot_result(mesh1, S, 'S11', U=U)
+plot_result(mesh1, S, 'S12', U=U)
