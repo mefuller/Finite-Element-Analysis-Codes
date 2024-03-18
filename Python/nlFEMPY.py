@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import BoundaryNorm
+from matplotlib.colors import ListedColormap
 
 
 def map_DOF(x):
@@ -30,6 +31,16 @@ def gather_index(a, b):
         raise Exception('Input arrays must share 1 common values.')
     return output
 
+def shape4N(xi, eta):
+    """N matrix of 4 node quadrilateral element."""
+    N = [[(1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta), 0], 
+         [ 0,  (1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta)]]
+    
+    return np.array(N)
+
+def N1234(xi, eta):
+    return np.array([(1/4)*(1-xi)*(1-eta), (1/4)*(1+xi)*(1-eta), (1/4)*(1+xi)*(1+eta), (1/4)*(1-xi)*(1+eta)])
+
 def xy_shape8N(xieta, xy):
     """Takes in the local coordinate [xi,eta] and the node points [x,y]_i
       of a 8 noded isoparametric element.
@@ -48,6 +59,26 @@ def xy_shape8N(xieta, xy):
     N[6] = (1 - xi**2)*(1 + eta)/2
     N[7] = (1 - xi)*(1 - eta**2)/2
     return np.array([np.dot(N,x), np.dot(N,y)])
+
+
+
+def BESTFITQ(input_array):
+    """Finds the values of a quantity at elemental nodes based on an array of input values defined at the gauss points.
+    Uses a least squares fitting technique to find the nodal array values."""
+    a = input_array
+
+    N = np.array([N1234(-1/np.sqrt(3), -1/np.sqrt(3)), 
+                  N1234(1/np.sqrt(3), -1/np.sqrt(3)), 
+                  N1234(1/np.sqrt(3), 1/np.sqrt(3)), 
+                  N1234(-1/np.sqrt(3), 1/np.sqrt(3))])
+    
+    K = N.T@N
+    F = N.T@a
+    Q = np.linalg.lstsq(K, F, rcond = None)
+
+    return Q[0]
+
+##### Classes #####
 
 class Mesher:
     def __init__(self):
@@ -443,7 +474,7 @@ class Global_F_matrix:
             for element in elements:
                 self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
-    def build(self, trac_nodes, trac_value, trac_dir):
+    def apply_traction(self, trac_nodes, trac_value, trac_dir):
         """Constructs the global applied force vector."""
         for k in range(trac_nodes.shape[0]):
             n1 = trac_nodes[k,0]
@@ -463,6 +494,13 @@ class Global_F_matrix:
             self.F_global[n1*2 + 1] += ty*len23/2
             self.F_global[n2*2] += tx*len23/2
             self.F_global[n2*2 + 1] += ty*len23/2
+    def apply_pointload(self, node_target, load_value, load_dir):
+        """Applies a point force to a given node or node set."""
+        for node in enumerate(node_target):
+            if load_dir == 'x':
+                self.F_global[node[1]*2] += load_value[node[0]]
+            else:
+                self.F_global[node[1]*2 + 1] += load_value[node[0]]
 
 ##### Tensor and scalar quantities #####
 
@@ -606,31 +644,51 @@ class Standard(Solver):
         b = np.append(R, Q.T)
 
         c = np.linalg.solve(a, b)
-        print(c)
-        print(len(c))
+
         self.U.update(c[0:self.K.shape[0]])
         print('Solve complete.')
 
 def plot_result(mesh: Mesh, result, component: str, U, deformed=True):
+    """Creates a contour plot of a Nodal_quantity or Element_quantity"""
     fig, ax = plt.subplots()
+
     zmin = result.values[component].min()
     zmax = result.values[component].max()
-    levels = MaxNLocator(nbins=10).tick_values(zmin, zmax)
-    cmap = plt.colormaps['plasma']
+
+    extrapolated = np.zeros((mesh.elements.shape[0],4))
+    if isinstance(result, Elemental_quantity):
+        for element in enumerate(mesh.elements):
+            extrapolated[element[0],:] = BESTFITQ(result.values[component][element[0]*4:element[0]*4+4])
+            zmin = np.min(extrapolated)
+            zmax = np.max(extrapolated)
+
+    levels = MaxNLocator().tick_values(zmin, zmax)
+    cmap = plt.colormaps['hsv_r']
+    cmap = ListedColormap(cmap(np.linspace(0.31, 1, 256)))
     norm = BoundaryNorm(levels, ncolors=cmap.N, extend='both')
+
     if deformed == True:
         node_positions_x = mesh.nodes[0,:] + U.values['U1']
         node_positions_y = mesh.nodes[1,:] + U.values['U2']
     else:
         node_positions_x = mesh.nodes[0,:]
         node_positions_y = mesh.nodes[1,:]
+
     for element in enumerate(mesh.elements):
         x1, x2, x3, x4 = node_positions_x[element[1]]
         y1, y2, y3, y4 = node_positions_y[element[1]]
         X = [[x4, x3], [x1, x2]]
         Y = [[y4, y3], [y1, y2]]
-        Z = np.array([[ np.mean(result.values[component][element[0]*4:element[0]*4+4]) ]])
-        im = ax.pcolormesh(X, Y, Z, edgecolor='black', cmap=cmap, norm=norm)
+
+        if isinstance(result, Elemental_quantity):
+            Z = extrapolated[element[0],:]
+            Z = [[Z[3], Z[2]], [Z[0], Z[1]]]
+        elif isinstance(result, Nodal_quantity):
+            Z = result.values[component][element[1]]
+            Z = [[Z[3], Z[2]], [Z[0], Z[1]]]
+
+        im = ax.contourf(X, Y, Z, levels = levels, cmap=cmap, norm=norm)
+
     fig.colorbar(im, ticks=levels, drawedges=True, extend='both', extendrect=True)
     ax.set_title(component)
     plt.show()
@@ -660,8 +718,9 @@ S = Stress(mesh1)
 U = Displacement(mesh1)
 T = Global_T_matrix(mesh1)
 F = Global_F_matrix(mesh1)
-F.build(np.array([[8,5],[5,2]]), 100, 'x')
-BC1 = Boundary_condition([ 1,  3,  5,  0,  6, 12], [0, 0, 0, 0, 0, 0], K)
+# F.apply_traction(np.array([[6,7],[7,8]]), 100, 'x')
+F.apply_pointload([2, 5, 8, 6], [500, 1000, 500, -500], 'x')
+BC1 = Boundary_condition([1, 0, 6], [0, 0, 0], K)
 solution = Standard(K,T,F,BC1,S,E,U)
 solution.start()
 
@@ -673,3 +732,5 @@ S.compute(U.return_all())
 plot_result(mesh1, S, 'S22', U=U)
 plot_result(mesh1, S, 'S11', U=U)
 plot_result(mesh1, S, 'S12', U=U)
+plot_result(mesh1, U, 'U1', U=U)
+plot_result(mesh1, U, 'U2', U=U)
