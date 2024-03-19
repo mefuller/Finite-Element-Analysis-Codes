@@ -89,13 +89,22 @@ class Mesher:
         Output is a 3D array in the form of [xy, point number, block number]"""
         block0 = np.array([[0, r/2, r/2, 0, r/4, r/2, r/4, 0],
                             [0, 0, r/2, r/2, 0, r/4, r/2, r/4]])
-
+        
         block1 = np.array([[r/2, r, r/np.sqrt(2), r/2, r*3/4, r*np.cos(np.pi/8), r*(1+np.sqrt(2))/4, r/2],
                             [0, 0, r/np.sqrt(2), r/2, 0, r*np.sin(np.pi/8), r*(1+np.sqrt(2))/4, r/4]])
 
         block2 = np.array([[0, r/2, r/np.sqrt(2), 0, r/4, r*(1+np.sqrt(2))/4, r*np.cos(np.pi*3/8), 0],
                             [r/2, r/2, r/np.sqrt(2), r, r/2, r*(1+np.sqrt(2))/4, r*np.sin(np.pi*3/8), r*3/4]])
-       
+        
+        ## Alternate set ##
+        # block0 = np.array([[0, r/2, r/2*np.sqrt(1/2), 0, r/4, r/4*(1 + np.sqrt(1/2)), r/4, 0],
+        #                     [0, 0, r/2*np.sqrt(1/2), r/2, 0, r/4, r/4*(1 + np.sqrt(1/2)), r/4]])
+        
+        # block1 = np.array([[r/2, r, r/np.sqrt(2), r/2*np.sqrt(1/2), r*3/4, r*np.cos(np.pi/8), r*(1+np.sqrt(2))/4, r/4*(1 + np.sqrt(1/2))],
+        #                     [0, 0, r/np.sqrt(2), r/2*np.sqrt(1/2), 0, r*np.sin(np.pi/8), r*(1+np.sqrt(2))/4, r/4]])
+
+        # block2 = np.array([[0, r/2*np.sqrt(1/2), r/np.sqrt(2), 0, r/4, r*(1+np.sqrt(2))/4, r*np.cos(np.pi*3/8), 0],
+        #                     [r/2, r/2*np.sqrt(1/2), r/np.sqrt(2), r, r/4*(1 + np.sqrt(1/2)), r*(1+np.sqrt(2))/4, r*np.sin(np.pi*3/8), r*3/4]])
         output = np.zeros((2,8,3))
         output[:,:,0] = block0
         output[:,:,1] = block1
@@ -218,7 +227,7 @@ class Mesher:
         DUMMY = np.full(NNT, None)
         NCOUNT = 0
         for node in enumerate(np.ravel(NNAR, order="F")):
-            self.maxnode = NCOUNT
+            # self.maxnode = NCOUNT
             if node[1] == None:
                 pass
             elif node[1] < 0:
@@ -230,6 +239,7 @@ class Mesher:
                     NCOUNT += 1
             else:
                 pass
+            self.maxnode = NCOUNT
         NNAR = np.reshape(DUMMY, NNAR.shape, order="F")
         # print('final',NNAR)
 
@@ -286,7 +296,7 @@ class Mesher:
                 BLOCKID += 1
             WPLACE += NWD[KW]
 
-        self.nodes = np.zeros((2, self.maxnode+1)) # make an object to hold the x,y coordinates of the whole mesh in a 2Xnum_nodes size
+        self.nodes = np.zeros((2, self.maxnode)) # make an object to hold the x,y coordinates of the whole mesh in a 2Xnum_nodes size
 
         for y in range(NNAR.shape[1]):
             for x in range(NNAR.shape[0]):
@@ -648,24 +658,34 @@ class Standard(Solver):
         self.U.update(c[0:self.K.shape[0]])
         print('Solve complete.')
 
-def plot_result(mesh: Mesh, result, component: str, U, deformed=True):
+def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
     """Creates a contour plot of a Nodal_quantity or Element_quantity"""
     fig, ax = plt.subplots()
 
     zmin = result.values[component].min()
     zmax = result.values[component].max()
 
-    extrapolated = np.zeros((mesh.elements.shape[0],4))
     if isinstance(result, Elemental_quantity):
+        averaged = np.zeros((mesh.nodes.shape[1])) # Array to store nodal averages
+        count = np.zeros((mesh.nodes.shape[1])) # Array to store the count of elements a node is attached to
+        extrapolated = np.zeros((mesh.elements.shape[0], 4)) # also make an array to store the extrapolated node values of each element to use later.
         for element in enumerate(mesh.elements):
             extrapolated[element[0],:] = BESTFITQ(result.values[component][element[0]*4:element[0]*4+4])
-            zmin = np.min(extrapolated)
-            zmax = np.max(extrapolated)
+            averaged[element[1]] += extrapolated[element[0],:]
+            count[element[1]] += [1, 1, 1, 1]
+        averaged = np.divide(averaged, count) # complete the average by dividing by the counts
+        zmin = np.min(averaged)
+        zmax = np.max(averaged)
+        delz = np.abs(np.min(extrapolated) - np.max(extrapolated))
+        # Spread out the min and max limits if they are too close.
+        # if np.absolute(zmin - zmax) <= 1e-10:
+        #     zmin = zmin*0.9
+        #     zmax = zmax*1.1
 
     levels = MaxNLocator().tick_values(zmin, zmax)
     cmap = plt.colormaps['hsv_r']
     cmap = ListedColormap(cmap(np.linspace(0.31, 1, 256)))
-    norm = BoundaryNorm(levels, ncolors=cmap.N, extend='both')
+    norm = BoundaryNorm(levels, ncolors=cmap.N)
 
     if deformed == True:
         node_positions_x = mesh.nodes[0,:] + U.values['U1']
@@ -681,16 +701,49 @@ def plot_result(mesh: Mesh, result, component: str, U, deformed=True):
         Y = [[y4, y3], [y1, y2]]
 
         if isinstance(result, Elemental_quantity):
-            Z = extrapolated[element[0],:]
+            #check the average difference of values at each node
+            dont_avg = []
+            for node_num in enumerate(element[1]):
+                # print(node_num, np.where(mesh.elements == node_num))
+                index = np.where(mesh.elements == node_num[1])
+                values = extrapolated[index]
+                local_minmax = np.abs(np.min(values) - np.max(values))
+                rel_avg = local_minmax/delz
+                # print('rel_avg: ',rel_avg)
+                if rel_avg > avg_threshold:
+                    dont_avg.append(node_num[0])
+            # print(dont_avg)
+            Z = averaged[element[1]]
+            # print('averaged: ',Z)
+            # if node is on dont avg list, replace Z with etrapolated value
+            for node in dont_avg:
+                Z[node] = extrapolated[element[0],:][node]
+                if Z[node] < zmin:
+                    zmin = Z[node]
+                elif Z[node] > zmax:
+                    zmax = Z[node]            
+            # print('subbed: ', Z)
             Z = [[Z[3], Z[2]], [Z[0], Z[1]]]
+            
         elif isinstance(result, Nodal_quantity):
             Z = result.values[component][element[1]]
             Z = [[Z[3], Z[2]], [Z[0], Z[1]]]
 
+        # Update levels in case zmin and zmax changed.
+        levels = MaxNLocator().tick_values(zmin, zmax)
         im = ax.contourf(X, Y, Z, levels = levels, cmap=cmap, norm=norm)
-
-    fig.colorbar(im, ticks=levels, drawedges=True, extend='both', extendrect=True)
-    ax.set_title(component)
+        if plot_mesh == True:
+            ax.fill([X[1][0], X[1][1], X[0][1], X[0][0]],
+                     [Y[1][0], Y[1][1], Y[0][1], Y[0][0]],
+                       edgecolor = 'black', facecolor = 'none')
+    cbar = fig.colorbar(im, ticks=levels, drawedges=True, extend='both', extendrect=True, format='%4.3E')
+    if isinstance(result, Elemental_quantity):
+        ax.set_title(component)
+        fig.text(0.90,0, ' (Avg: {:3.0%})'.format(avg_threshold), ha='right', va='bottom')
+    else:
+        ax.set_title(component)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
     plt.show()
 
 
@@ -699,18 +752,18 @@ def plot_result(mesh: Mesh, result, component: str, U, deformed=True):
 start = timeit.default_timer()
 
 mesher1 = Mesher()
-# mesher1.set_params([2,2], [[2,2], [2,2]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]])
-mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(100,100))
+# mesher1.set_params([2,2], [[3,6], [3,6]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]])
+mesher1.set_params([1,1], [[10],[10]], mesher1.coords_Quad(10, 10))
 mesher1.create()
 
-mesher1.nodes[:,4] = np.array([[60, 20]])
+# mesher1.nodes[:,4] = np.array([[60, 20]])
 
 mesh1 = Mesh()
 mesh1.make_mesh(mesher1)
 steel = Material_model([30e6, 0.30], "linear elastic, plane strain")
 K = Global_K_matrix(mesh1)
 K.build(steel)
-mesh1.plot()
+# mesh1.plot()
 
 E = Strain(mesh1)
 dE = delta_Strain(mesh1)
@@ -718,9 +771,13 @@ S = Stress(mesh1)
 U = Displacement(mesh1)
 T = Global_T_matrix(mesh1)
 F = Global_F_matrix(mesh1)
-# F.apply_traction(np.array([[6,7],[7,8]]), 100, 'x')
-F.apply_pointload([2, 5, 8, 6], [500, 1000, 500, -500], 'x')
-BC1 = Boundary_condition([1, 0, 6], [0, 0, 0], K)
+# F.apply_traction(np.array([[119, 120]]), 100, 'y')
+# F.apply_pointload([2, 5, 8, 6], [50000, 100000, 50000, -50000], 'x')
+# find nodes on the top surface
+topsurf = np.where(mesh1.nodes[1] == 10)
+F.apply_pointload(topsurf[0], [1e5]*len(topsurf[0]), 'y')
+bottomsurf = np.where(mesh1.nodes[1] == 0 and mesh1.nodes[0]<=5)
+
 solution = Standard(K,T,F,BC1,S,E,U)
 solution.start()
 
