@@ -1,7 +1,7 @@
 # Finite-Element-Analysis-Codes
 
 ### What this project is:
-This repository contains finite element analysis codes written in Python and Matlab.  Most active development is currently devoted to the Python version of the code.
+This repository contains finite element analysis codes written in Python.
 
 ### Why this project is useful:
 These codes are meant to be used for educational and research purposes.  They provide a basic framework where constitutive models can be implemented, additional analysis capability tested and developed, or just to use as a way to learn the fundamentals of the finite element method. 
