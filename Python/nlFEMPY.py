@@ -119,10 +119,11 @@ class Mesher:
         output[:,:,0] = block0
         return output
     
-    def set_params(self, blocks_nums, div_nums, blocks_coords, void = [], merge = [[]]):
+    def set_params(self, blocks_nums, div_nums, blocks_coords, void = [], merge = [[]], surfs = [[]]):
         self.blocks_nums = np.array(blocks_nums)
         self.div_nums = np.array(div_nums)
         self.void = void
+        self.__surflist = surfs
         if len(np.shape(merge)) == 2 or merge == None:
             self.merge = merge
         else:
@@ -305,6 +306,18 @@ class Mesher:
                     self.nodes[0,NNAR[x,y]] = NX[x,y]
                     self.nodes[1,NNAR[x,y]] = NY[x,y]
 
+        #Make and save surfaces
+        self.surfs = []
+        for row in range(len(self.__surflist)):
+            self.surfs.append([])
+        for pair in enumerate(self.__surflist):
+            point1 = pair[1][0]
+            point2 = pair[1][1]
+            line1 = np.array(gather_index(self.POS[point1], self.POS[point2]))
+            for point in enumerate(line1):
+                self.surfs[pair[0]].append(NNAR[point[1][0], point[1][1]])
+
+
 class Mesh:
     """Mesh object of a meshed region with arrays containing the nodal positions and element numbering."""
     def __init__(self):
@@ -486,6 +499,8 @@ class Global_F_matrix:
                 i += 1
     def apply_traction(self, trac_nodes, trac_value, trac_dir):
         """Constructs the global applied force vector."""
+        if isinstance(trac_nodes, list) is True:
+            trac_nodes = np.array(trac_nodes)
         for k in range(trac_nodes.shape[0]):
             n1 = trac_nodes[k,0]
             x1 = self.mesh.nodes[0,n1]
@@ -736,7 +751,7 @@ def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_thresh
             ax.fill([X[1][0], X[1][1], X[0][1], X[0][0]],
                      [Y[1][0], Y[1][1], Y[0][1], Y[0][0]],
                        edgecolor = 'black', facecolor = 'none')
-    cbar = fig.colorbar(im, ticks=levels, drawedges=True, extend='both', extendrect=True, format='%4.3E')
+    cbar = fig.colorbar(im, ticks=levels, drawedges=True, extend='both', extendrect=True, format='%.3E')
     if isinstance(result, Elemental_quantity):
         ax.set_title(component)
         fig.text(0.90,0, ' (Avg: {:3.0%})'.format(avg_threshold), ha='right', va='bottom')
@@ -753,7 +768,7 @@ start = timeit.default_timer()
 
 mesher1 = Mesher()
 # mesher1.set_params([2,2], [[3,6], [3,6]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]])
-mesher1.set_params([1,1], [[10],[10]], mesher1.coords_Quad(10, 10))
+mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
 mesher1.create()
 
 # mesher1.nodes[:,4] = np.array([[60, 20]])
@@ -774,9 +789,12 @@ F = Global_F_matrix(mesh1)
 # F.apply_traction(np.array([[119, 120]]), 100, 'y')
 # F.apply_pointload([2, 5, 8, 6], [50000, 100000, 50000, -50000], 'x')
 # find nodes on the top surface
-topsurf = np.where(mesh1.nodes[1] == 10)
-F.apply_pointload(topsurf[0], [1e5]*len(topsurf[0]), 'y')
-bottomsurf = np.where(mesh1.nodes[1] == 0 and mesh1.nodes[0]<=5)
+topsurf = [i for i in mesher1.surfs[2]]
+# F.apply_pointload(topsurf, [10,20,10], 'y')
+F.apply_traction([[6,7],[7,8]], 10000, 'y')
+bottomsurf = mesher1.surfs[0]
+sidesurf = mesher1.surfs[1]
+BC1 = Boundary_condition([i*2 for i in sidesurf]+[i*2+1 for i in bottomsurf], np.zeros(len(bottomsurf)+len(sidesurf)), K)
 
 solution = Standard(K,T,F,BC1,S,E,U)
 solution.start()
