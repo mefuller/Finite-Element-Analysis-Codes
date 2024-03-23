@@ -526,6 +526,30 @@ class Global_F_matrix:
                 self.F_global[node[1]*2] += load_value[node[0]]
             else:
                 self.F_global[node[1]*2 + 1] += load_value[node[0]]
+    def apply_pressure(self, node_list, load_value):
+        """Applies pressure load to a set of nodes."""
+        node_pairs = []
+        normal = []
+        for node1 in node_list:
+            for node2 in node_list:
+                if node1 == node2:
+                    break
+                else:
+                    for element in self.mesh.elements:
+                        if node1 in element and node2 in element:
+                            node_pairs.append([node1, node2])
+                            break
+        for pair in node_pairs:
+            tangent = [self.mesh.nodes[0, pair[0]] - self.mesh.nodes[0, pair[1]],
+                       self.mesh.nodes[1, pair[0]] - self.mesh.nodes[1, pair[1]]]
+            magnitude = np.sqrt(tangent[0]**2 + tangent[1]**2)
+            tangent = tangent/magnitude
+            # compute normal and multiply by -1 to reverse direction toward element
+            normal = np.multiply([-tangent[1], tangent[0]], -load_value)
+            # Apply tractions for x and y components
+            self.apply_traction([pair], normal[0], 'x')
+            self.apply_traction([pair], normal[1], 'y')
+
 
 ##### Tensor and scalar quantities #####
 
@@ -623,17 +647,40 @@ class delta_Strain(Elemental_quantity):
 
 class Boundary_condition:
     """Defines a boundary condition for the model."""
-    def __init__(self, DOFs: np.ndarray, values: np.ndarray, Kg: Global_K_matrix):
-        if len(DOFs) != len(values):
+    def __init__(self, Kg: Global_K_matrix):
+        self.K = Kg.K_global
+    def apply_BC(self, nodes: np.ndarray, values: np.ndarray, DOF_component):
+        if len(nodes) != len(values):
             raise Exception('DOF and value inputs for boundary condition must be the same length.')
-        self.DOFs = DOFs
-        self.values = values
-        K = Kg.K_global
-        self.num_DOFs = len(DOFs)
-        self.dim_Kglobal = K.shape[0]
-        self.type = None
-    # def create_LagrangeMultipliers(self):
-        """Creates the C and Q matrices necessary for the Langrange multiplier approach."""
+        
+        #Check if inputs are in numpy array format and convert if not.
+        if type(nodes) != 'numpy.ndarray':
+            nodes = np.array(nodes)
+        if type(values) != 'numpy.ndarray':
+            values = np.array(values)
+
+        #Change node numbers to appropriate DOF
+        if DOF_component == 'U1':
+            new_DOFs = nodes*2
+        elif DOF_component == 'U2':
+            new_DOFs = nodes*2+1
+        new_values = values
+
+        # if self.DOFs does not yet exist, make it; otherwise append to existing array
+        if hasattr(self, 'DOFs') is False:
+            self.DOFs = np.array(new_DOFs)
+        else:
+            self.DOFs = np.append(self.DOFs, new_DOFs)
+        
+        # if self.values does not yet exist, make it; otherwise append to existing array
+        if hasattr(self, 'values') is False:
+            self.values = np.array(new_values)
+        else:
+            self.values = np.append(self.values, new_values)
+
+        self.num_DOFs = len(self.DOFs)
+        self.dim_Kglobal = self.K.shape[0]
+        #Creates the C and Q matrices necessary for the Langrange multiplier approach.
         self.type = "Lagrange multipliers"
         self.C = np.zeros((self.num_DOFs, self.dim_Kglobal))
         self.Q = np.zeros(self.num_DOFs)
@@ -767,18 +814,18 @@ def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_thresh
 start = timeit.default_timer()
 
 mesher1 = Mesher()
-# mesher1.set_params([2,2], [[3,6], [3,6]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]])
-mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
+mesher1.set_params([2,2], [[3,3], [3,3]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]], surfs=[[0,2], [0,6], [6,7], [5,2]])
+# mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
 mesher1.create()
 
-# mesher1.nodes[:,4] = np.array([[60, 20]])
+# mesher1.nodes[:,4] = np.array([[.6, .2]])
 
 mesh1 = Mesh()
 mesh1.make_mesh(mesher1)
 steel = Material_model([30e6, 0.30], "linear elastic, plane strain")
 K = Global_K_matrix(mesh1)
 K.build(steel)
-# mesh1.plot()
+mesh1.plot()
 
 E = Strain(mesh1)
 dE = delta_Strain(mesh1)
@@ -786,16 +833,16 @@ S = Stress(mesh1)
 U = Displacement(mesh1)
 T = Global_T_matrix(mesh1)
 F = Global_F_matrix(mesh1)
-# F.apply_traction(np.array([[119, 120]]), 100, 'y')
-# F.apply_pointload([2, 5, 8, 6], [50000, 100000, 50000, -50000], 'x')
-# find nodes on the top surface
-topsurf = [i for i in mesher1.surfs[2]]
-# F.apply_pointload(topsurf, [10,20,10], 'y')
-F.apply_traction([[6,7],[7,8]], 10000, 'y')
+topsurf1 = mesher1.surfs[2]
+topsurf2 = mesher1.surfs[3]
+# F.apply_traction([[6,7],[7,8]], 10000, 'y')
+F.apply_pressure(topsurf1 + topsurf2, 10000)
 bottomsurf = mesher1.surfs[0]
 sidesurf = mesher1.surfs[1]
-BC1 = Boundary_condition([i*2 for i in sidesurf]+[i*2+1 for i in bottomsurf], np.zeros(len(bottomsurf)+len(sidesurf)), K)
-
+BC1 = Boundary_condition(K)
+BC1.apply_BC(sidesurf, np.zeros(len(sidesurf)), 'U1')
+BC1.apply_BC(bottomsurf, np.zeros(len(bottomsurf)), 'U2')
+             
 solution = Standard(K,T,F,BC1,S,E,U)
 solution.start()
 
@@ -804,6 +851,7 @@ print('Elapsed time: ', f'{stop-start} seconds.')
 
 dE.compute(U.return_all())
 S.compute(U.return_all())
+
 plot_result(mesh1, S, 'S22', U=U)
 plot_result(mesh1, S, 'S11', U=U)
 plot_result(mesh1, S, 'S12', U=U)
