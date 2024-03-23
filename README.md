@@ -1,4 +1,5 @@
 # Finite-Element-Analysis-Codes
+![image](https://github.com/nickpayne12/Finite-Element-Analysis-Codes/assets/160539669/2e361340-6655-439e-bc65-d034600152f3)
 
 ### What this project is:
 This repository contains finite element analysis codes written in Python.
