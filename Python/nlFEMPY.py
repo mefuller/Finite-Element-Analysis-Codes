@@ -1,13 +1,21 @@
 import timeit
+from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import BoundaryNorm
 from matplotlib.colors import ListedColormap
 
+def r_theta(x: np.ndarray, y):
+    """Returns polar coordinates r and theta for a given x and y pair."""
+    r = np.sqrt(x**2 + y**2)
+    theta = np.arctan(y/x)
+    return r, theta
+
 
 def map_DOF(x):
     return x*2, x*2+1
+
 
 def gather_index(a, b):
     """return index pairs between index locations a and b, including a, b."""
@@ -31,6 +39,7 @@ def gather_index(a, b):
         raise Exception('Input arrays must share 1 common values.')
     return output
 
+
 def shape4N(xi, eta):
     """N matrix of 4 node quadrilateral element."""
     N = [[(1/4)*(1-xi)*(1-eta), 0,  (1/4)*(1+xi)*(1-eta), 0,  (1/4)*(1+xi)*(1+eta), 0,  (1/4)*(1-xi)*(1+eta), 0], 
@@ -38,8 +47,10 @@ def shape4N(xi, eta):
     
     return np.array(N)
 
+
 def N1234(xi, eta):
     return np.array([(1/4)*(1-xi)*(1-eta), (1/4)*(1+xi)*(1-eta), (1/4)*(1+xi)*(1+eta), (1/4)*(1-xi)*(1+eta)])
+
 
 def xy_shape8N(xieta, xy):
     """Takes in the local coordinate [xi,eta] and the node points [x,y]_i
@@ -61,7 +72,6 @@ def xy_shape8N(xieta, xy):
     return np.array([np.dot(N,x), np.dot(N,y)])
 
 
-
 def BESTFITQ(input_array):
     """Finds the values of a quantity at elemental nodes based on an array of input values defined at the gauss points.
     Uses a least squares fitting technique to find the nodal array values."""
@@ -77,6 +87,7 @@ def BESTFITQ(input_array):
     Q = np.linalg.lstsq(K, F, rcond = None)
 
     return Q[0]
+
 
 ##### Classes #####
 
@@ -96,15 +107,6 @@ class Mesher:
         block2 = np.array([[0, r/2, r/np.sqrt(2), 0, r/4, r*(1+np.sqrt(2))/4, r*np.cos(np.pi*3/8), 0],
                             [r/2, r/2, r/np.sqrt(2), r, r/2, r*(1+np.sqrt(2))/4, r*np.sin(np.pi*3/8), r*3/4]])
         
-        ## Alternate set ##
-        # block0 = np.array([[0, r/2, r/2*np.sqrt(1/2), 0, r/4, r/4*(1 + np.sqrt(1/2)), r/4, 0],
-        #                     [0, 0, r/2*np.sqrt(1/2), r/2, 0, r/4, r/4*(1 + np.sqrt(1/2)), r/4]])
-        
-        # block1 = np.array([[r/2, r, r/np.sqrt(2), r/2*np.sqrt(1/2), r*3/4, r*np.cos(np.pi/8), r*(1+np.sqrt(2))/4, r/4*(1 + np.sqrt(1/2))],
-        #                     [0, 0, r/np.sqrt(2), r/2*np.sqrt(1/2), 0, r*np.sin(np.pi/8), r*(1+np.sqrt(2))/4, r/4]])
-
-        # block2 = np.array([[0, r/2*np.sqrt(1/2), r/np.sqrt(2), 0, r/4, r*(1+np.sqrt(2))/4, r*np.cos(np.pi*3/8), 0],
-        #                     [r/2, r/2*np.sqrt(1/2), r/np.sqrt(2), r, r/4*(1 + np.sqrt(1/2)), r*(1+np.sqrt(2))/4, r*np.sin(np.pi*3/8), r*3/4]])
         output = np.zeros((2,8,3))
         output[:,:,0] = block0
         output[:,:,1] = block1
@@ -351,8 +353,7 @@ class Mesh:
         num_elements = self.elements.shape[0]
         Q = self.nodes[:, self.elements.ravel(order='C')]
         Q = np.reshape(Q, (8, num_elements), order='F')
-        self.gps = np.reshape(N@Q, (2, num_elements*4), order='F')
-        self.gauss_points = np.vstack((self.gps, np.tile(GP[:,2].T, [1, num_elements])))
+        self.gauss_points = np.vstack((np.reshape(N@Q, (2, num_elements*4), order='F'), np.tile(GP[:,2].T, [1, num_elements])))
 
         # Create the B matrix and determinate of the Jacobian for each gauss point.
         def BmatdetJ(self, x, loc):
@@ -395,16 +396,18 @@ class Mesh:
         ax.scatter(node_x_locations, node_y_locations, color="black")
         for i in range(self.nodes.shape[1]):
             ax.annotate('n: '+str(i), (node_x_locations[i]+0.01*max_x, node_y_locations[i]+0.02*max_y))
-
-            # plt.arrow(node_x_locations[i], node_y_locations[i], 0.04*np.mean([max_x, max_y]), 0, width=0.01, color='green')
-            # ax.annotate(str(i*2), (node_x_locations[i]+0.04*max_x, node_y_locations[i] + 0.04*max_y), color='green')
-            # plt.arrow(node_x_locations[i], node_y_locations[i], 0, 0.04*np.mean([max_x, max_y]), width=0.01, color='orange')
-            # ax.annotate(str(i*2+1), (node_x_locations[i]-0.04*max_x, node_y_locations[i] + 0.04*max_y), color='orange')
         
         for i in range(self.elements.shape[0]):
-            ax.annotate(f'El: {i}', (np.mean(self.nodes[0, self.elements[i]]), np.mean(self.nodes[1, self.elements[i]])), ha='center', va='center', color="red")
+            ax.annotate(f' {i}', (np.mean(self.nodes[0, self.elements[i]]), np.mean(self.nodes[1, self.elements[i]])), ha='center', va='center', color="red")
+        
+        # for i in range(self.gauss_points.shape[1]):
+            # ax.annotate(str(i), (self.gauss_points[0, i], self.gauss_points[1, i]), color='blue')
+            # ax.scatter(self.gauss_points[0, i], self.gauss_points[1, i], color='blue', marker='x')
+            
         # plt.subplots_adjust(top=2, right=2, bottom=1.5)
         ax.set_aspect('equal', 'box')
+        fig.set_figheight(10)
+        fig.set_figwidth(10)
         plt.show()
 
 class Material_model:
@@ -497,15 +500,26 @@ class Global_F_matrix:
             for element in elements:
                 self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
                 i += 1
-    def apply_traction(self, trac_nodes, trac_value, trac_dir):
+    def apply_traction(self, node_list, trac_value, trac_dir):
         """Constructs the global applied force vector."""
-        if isinstance(trac_nodes, list) is True:
-            trac_nodes = np.array(trac_nodes)
-        for k in range(trac_nodes.shape[0]):
-            n1 = trac_nodes[k,0]
+        res = []
+        [res.append(x) for x in node_list if x not in res]
+        node_list = res
+        node_pairs = []
+        for node1 in node_list:
+            for node2 in node_list:
+                if node1 == node2:
+                    break
+                else:
+                    for element in self.mesh.elements:
+                        if node1 in element and node2 in element:
+                            node_pairs.append([node1, node2])
+                            break
+        for pair in node_pairs:
+            n1 = pair[0]
             x1 = self.mesh.nodes[0,n1]
             y1 = self.mesh.nodes[1,n1]
-            n2 = trac_nodes[k,1]
+            n2 = pair[1]
             x2 = self.mesh.nodes[0,n2]
             y2 = self.mesh.nodes[1,n2]
             len23 = np.sqrt((x2-x1)**2 + (y2-y1)**2)
@@ -528,6 +542,10 @@ class Global_F_matrix:
                 self.F_global[node[1]*2 + 1] += load_value[node[0]]
     def apply_pressure(self, node_list, load_value):
         """Applies pressure load to a set of nodes."""
+        # Eliminate duplicates from list
+        res = []
+        [res.append(x) for x in node_list if x not in res]
+        node_list = res
         node_pairs = []
         normal = []
         for node1 in node_list:
@@ -539,6 +557,8 @@ class Global_F_matrix:
                         if node1 in element and node2 in element:
                             node_pairs.append([node1, node2])
                             break
+        print(node_pairs)
+        print(node_list)
         for pair in node_pairs:
             tangent = [self.mesh.nodes[0, pair[0]] - self.mesh.nodes[0, pair[1]],
                        self.mesh.nodes[1, pair[0]] - self.mesh.nodes[1, pair[1]]]
@@ -584,7 +604,20 @@ class Elemental_quantity:
         self.values = new_values
     def return_all(self):
         return self.values
-        
+    def transform(self):
+        transformed_values = deepcopy(self)
+        for i in range(self.mesh.gauss_points.shape[1]):
+            x = self.mesh.gauss_points[0, i]
+            y = self.mesh.gauss_points[1, i]
+            r, theta = r_theta(x,y)
+            sigma_x = self.values['S11'][i]
+            sigma_y = self.values['S22'][i]
+            sigma_xy = self.values['S12'][i]
+            transformed_values.values['S11'][i] = sigma_x*np.cos(theta)**2 + sigma_y*np.sin(theta)**2 + sigma_xy*np.sin(2*theta)
+            transformed_values.values['S22'][i] = sigma_x*np.sin(theta)**2 + sigma_y*np.cos(theta)**2 - sigma_xy*np.sin(2*theta)
+            transformed_values.values['S12'][i] = np.sin(theta)*np.cos(theta)*(sigma_y - sigma_x) + sigma_xy*np.cos(2*theta)
+        return transformed_values
+    
 class Stress(Elemental_quantity):
     """Stress tensor object."""
     def __init__(self, mesh: Mesh, number_of_components = 3):
@@ -720,7 +753,7 @@ class Standard(Solver):
         self.U.update(c[0:self.K.shape[0]])
         print('Solve complete.')
 
-def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
+def plot_result(mesh: Mesh, result, component: str, U=U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
     """Creates a contour plot of a Nodal_quantity or Element_quantity"""
     fig, ax = plt.subplots()
 
@@ -836,7 +869,8 @@ F = Global_F_matrix(mesh1)
 topsurf1 = mesher1.surfs[2]
 topsurf2 = mesher1.surfs[3]
 # F.apply_traction([[6,7],[7,8]], 10000, 'y')
-F.apply_pressure(topsurf1 + topsurf2, 10000)
+# F.apply_pressure(topsurf1 + topsurf2, 10000)
+F.apply_traction(topsurf1+topsurf2, -10000, 'y')
 bottomsurf = mesher1.surfs[0]
 sidesurf = mesher1.surfs[1]
 BC1 = Boundary_condition(K)
@@ -852,8 +886,13 @@ print('Elapsed time: ', f'{stop-start} seconds.')
 dE.compute(U.return_all())
 S.compute(U.return_all())
 
-plot_result(mesh1, S, 'S22', U=U)
-plot_result(mesh1, S, 'S11', U=U)
-plot_result(mesh1, S, 'S12', U=U)
-plot_result(mesh1, U, 'U1', U=U)
-plot_result(mesh1, U, 'U2', U=U)
+plot_result(mesh1, S, 'S22')
+plot_result(mesh1, S, 'S11')
+plot_result(mesh1, S, 'S12')
+# Transform to polar coordinates
+trans = S.transform()
+plot_result(mesh1, trans, 'S22')
+plot_result(mesh1, trans, 'S11')
+plot_result(mesh1, trans, 'S12')
+# plot_result(mesh1, U, 'U1', U=U)
+# plot_result(mesh1, U, 'U2', U=U)
