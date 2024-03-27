@@ -753,7 +753,7 @@ class Standard(Solver):
         self.U.update(c[0:self.K.shape[0]])
         print('Solve complete.')
 
-def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
+def plot_result(mesh: Mesh, result, component: str, U=U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
     """Creates a contour plot of a Nodal_quantity or Element_quantity"""
     fig, ax = plt.subplots()
 
@@ -886,13 +886,13 @@ print('Elapsed time: ', f'{stop-start} seconds.')
 dE.compute(U.return_all())
 S.compute(U.return_all())
 
-plot_result(mesh1, S, 'S22', U)
-plot_result(mesh1, S, 'S11', U)
-plot_result(mesh1, S, 'S12', U)
+plot_result(mesh1, S, 'S22')
+plot_result(mesh1, S, 'S11')
+plot_result(mesh1, S, 'S12')
 # Transform to polar coordinates
 trans = S.transform()
-plot_result(mesh1, trans, 'S22', U)
-plot_result(mesh1, trans, 'S11', U)
-plot_result(mesh1, trans, 'S12', U)
+plot_result(mesh1, trans, 'S22')
+plot_result(mesh1, trans, 'S11')
+plot_result(mesh1, trans, 'S12')
 # plot_result(mesh1, U, 'U1', U=U)
 # plot_result(mesh1, U, 'U2', U=U)
