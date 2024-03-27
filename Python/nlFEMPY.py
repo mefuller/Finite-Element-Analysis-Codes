@@ -651,6 +651,19 @@ class Strain(Elemental_quantity):
         self.tensor = np.array([self.values['E11'], self.values['E22'], self.values['E12']])
     def update(self, new_values):
         self.values['E11'], self.values['E22'], self.values['E12'] = new_values
+    def compute(self, delU):
+        E = np.zeros((3, self.length))
+        for k in enumerate(self.mesh.elements):
+            i = k[0]
+            element = k[1]
+            n1, n2, n3, n4 = element
+            index = [n1*2, n1*2+1, n2*2, n2*2+1, n3*2, n3*2+1, n4*2, n4*2+1]
+            delU_element = delU[index]
+            gauss_index = np.arange(4*i, 4*i+4)
+            for k in gauss_index:
+                B = self.mesh.B[:,:,k]
+                E[:, k] = B@delU_element
+        self.values['E11'], self.values['E22'], self.values['E12'] = E     
     def return_all(self):
         return np.array([self.values['E11'], self.values['E22'], self.values['E12']])
     
@@ -753,7 +766,7 @@ class Standard(Solver):
         self.U.update(c[0:self.K.shape[0]])
         print('Solve complete.')
 
-def plot_result(mesh: Mesh, result, component: str, U=U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
+def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
     """Creates a contour plot of a Nodal_quantity or Element_quantity"""
     fig, ax = plt.subplots()
 
@@ -847,8 +860,8 @@ def plot_result(mesh: Mesh, result, component: str, U=U, deformed=True, avg_thre
 start = timeit.default_timer()
 
 mesher1 = Mesher()
-mesher1.set_params([2,2], [[3,3], [3,3]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]], surfs=[[0,2], [0,6], [6,7], [5,2]])
-# mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
+# mesher1.set_params([2,2], [[3,3], [3,3]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]], surfs=[[0,2], [0,6], [6,7], [5,2]])
+mesher1.set_params([1,1], [[40],[4]], mesher1.coords_Quad(10, 1), surfs=[[0,1], [0,2], [2,3]])
 mesher1.create()
 
 # mesher1.nodes[:,4] = np.array([[.6, .2]])
@@ -866,16 +879,16 @@ S = Stress(mesh1)
 U = Displacement(mesh1)
 T = Global_T_matrix(mesh1)
 F = Global_F_matrix(mesh1)
+
 topsurf1 = mesher1.surfs[2]
-topsurf2 = mesher1.surfs[3]
-# F.apply_traction([[6,7],[7,8]], 10000, 'y')
-# F.apply_pressure(topsurf1 + topsurf2, 10000)
-F.apply_traction(topsurf1+topsurf2, -10000, 'y')
 bottomsurf = mesher1.surfs[0]
 sidesurf = mesher1.surfs[1]
+
 BC1 = Boundary_condition(K)
 BC1.apply_BC(sidesurf, np.zeros(len(sidesurf)), 'U1')
-BC1.apply_BC(bottomsurf, np.zeros(len(bottomsurf)), 'U2')
+BC1.apply_BC(sidesurf, np.zeros(len(sidesurf)), 'U2')
+
+F.apply_traction(topsurf1, -10000, 'y')
              
 solution = Standard(K,T,F,BC1,S,E,U)
 solution.start()
@@ -883,16 +896,12 @@ solution.start()
 stop = timeit.default_timer()
 print('Elapsed time: ', f'{stop-start} seconds.')
 
-dE.compute(U.return_all())
+E.compute(U.return_all())
 S.compute(U.return_all())
 
-plot_result(mesh1, S, 'S22')
-plot_result(mesh1, S, 'S11')
-plot_result(mesh1, S, 'S12')
-# Transform to polar coordinates
-trans = S.transform()
-plot_result(mesh1, trans, 'S22')
-plot_result(mesh1, trans, 'S11')
-plot_result(mesh1, trans, 'S12')
+plot_result(mesh1, S, 'S22', U)
+plot_result(mesh1, S, 'S11', U)
+plot_result(mesh1, S, 'S12', U)
+
 # plot_result(mesh1, U, 'U1', U=U)
 # plot_result(mesh1, U, 'U2', U=U)
