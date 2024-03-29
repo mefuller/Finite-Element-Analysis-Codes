@@ -421,34 +421,38 @@ class Material_model:
     def __init__(self, model_inputs: float, model_type: str):
         self.type = model_type
         self.inputs = model_inputs
+    def D_matrix(self, S = None, E = None):
         if self.type == "linear elastic, plane stress":
-            E = model_inputs[0]
-            nu = model_inputs[1]
-            self.D = E/(1-nu**2)*np.array([[1, nu, 0.0], [nu, 1.0, 0.0], [0.0, 0.0, 0.5*(1.0-nu)]])
+            young_modulus = self.inputs[0]
+            nu = self.inputs[1]
+            D = young_modulus/(1-nu**2)*np.array([[1, nu, 0.0], [nu, 1.0, 0.0], [0.0, 0.0, 0.5*(1.0-nu)]])
         if self.type == "linear elastic, plane strain":
-            E = model_inputs[0]
-            nu = model_inputs[1]
-            self.D = E/((1 + nu)*(1 - 2*nu))*np.array([[1.0 - nu, nu, 0.0], [nu, 1.0 - nu, 0.0], [0.0, 0.0, (1.0 - 2*nu)/2.0]])
+            young_modulus = self.inputs[0]
+            nu = self.inputs[1]
+            D = young_modulus/((1 + nu)*(1 - 2*nu))*np.array([[1.0 - nu, nu, 0.0], [nu, 1.0 - nu, 0.0], [0.0, 0.0, (1.0 - 2*nu)/2.0]])
+        return D
 
 class Global_K_matrix:
     """The global stiffness matrix object."""
     def __init__(self, input_mesh: Mesh):
         self.mesh = input_mesh
-        nodes = self.mesh.nodes
+        self.nodes = self.mesh.nodes
         elements = self.mesh.elements
-        self.K_global = np.zeros((nodes.shape[1]*2, nodes.shape[1]*2))
+        self.K_global = np.zeros((self.nodes.shape[1]*2, self.nodes.shape[1]*2))
         self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
+        self.material = input_mesh.material
         i = 0
         for element in elements:
             self.DOF_mapping[i,:] = np.ndarray.flatten(np.array(list(map(map_DOF, element))).T, order='F')
             i += 1
-    def build(self, mat_model: Material_model):
+    def build(self, S, E):
         """Constructs the global stiffness matrix."""
-        D = mat_model.D
+        self.K_global = np.zeros((self.nodes.shape[1]*2, self.nodes.shape[1]*2))
         for p in enumerate(self.mesh.elements):
             gauss_index = np.arange(4*p[0], 4*p[0]+4)
             index = self.DOF_mapping[p[0],:]
             for k in gauss_index:
+                D = self.material.D_matrix(S = S, E = E)
                 B = self.mesh.B[:,:,k]
                 weight = self.mesh.gauss_points[2,k]
                 detJ = self.mesh.detJ[k]
@@ -456,16 +460,15 @@ class Global_K_matrix:
                 for n in enumerate(index):
                     for m in enumerate(index):
                         self.K_global[n[1], m[1]] += k_element[n[0],m[0]]
-        self.mesh.assign_material(mat_model)
 
 
 class Global_T_matrix:
     """The global internal nodal force vector."""
     def __init__(self, input_mesh: Mesh):
             self.mesh = input_mesh
-            nodes = self.mesh.nodes
+            self.nodes = self.mesh.nodes
             elements = self.mesh.elements
-            self.T_global = np.zeros(nodes.shape[1]*2)
+            self.T_global = np.zeros(self.nodes.shape[1]*2)
             self.DOF_mapping = np.zeros((elements.shape[0], 8), dtype='int')
             i = 0
             for element in elements:
@@ -473,6 +476,7 @@ class Global_T_matrix:
                 i += 1
     def build(self, S):
         """Constructs the global internal force vector."""
+        self.T_global = np.zeros(self.nodes.shape[1]*2)
         i = 0
         for p in enumerate(self.mesh.elements):
             gauss_index = np.arange(4*p[0],4*p[0]+4)
@@ -586,12 +590,24 @@ class Nodal_quantity:
 class Displacement(Nodal_quantity):
     def __init__(self, mesh: Mesh, number_of_components = 2):
         super().__init__(mesh, number_of_components)
-        self.length = self.length*2
+        self.length = self.length
         self.values = {'U1': np.zeros(self.length), 'U2': np.zeros(self.length)}
     def update(self, new_values):
-        self.values['U1'], self.values['U2'] = np.array([new_values[range(0,self.length,2)], new_values[range(1,self.length,2)]])
+        self.values['U1'], self.values['U2'] = np.array([new_values[range(0,self.length*2,2)], new_values[range(1,self.length*2,2)]])
     def return_all(self):
         return np.ravel(np.array([self.values['U1'], self.values['U2']]), order='F')
+
+class delta_Displacement(Nodal_quantity):
+    def __init__(self, mesh: Mesh, number_of_components = 2):
+        super().__init__(mesh, number_of_components)
+        self.length = self.length
+        self.values = {'delU1': np.zeros(self.length), 'delU2': np.zeros(self.length)}
+    def clear(self):
+        self.values = {'delU1': np.zeros(self.length), 'delU2': np.zeros(self.length)}
+    def update(self, new_values):
+        self.values['delU1'], self.values['delU2'] = np.array([new_values[range(0,self.length*2,2)], new_values[range(1,self.length*2,2)]])
+    def return_all(self):
+        return np.ravel(np.array([self.values['delU1'], self.values['delU2']]), order='F')
 
 class Elemental_quantity:
     """An object that stores the values of elements at the gauss points."""
@@ -628,7 +644,7 @@ class Stress(Elemental_quantity):
         self.values['S11'], self.values['S22'], self.values['S12'] = new_values
     def compute(self, U):
         newS = np.zeros((3, self.length))
-        D = self.mesh.material.D
+        material = self.mesh.material
         for k in enumerate(self.mesh.elements):
             i = k[0]
             element = k[1]
@@ -637,11 +653,39 @@ class Stress(Elemental_quantity):
             U_element = U[index]
             gauss_index = np.arange(4*i, 4*i+4)
             for k in gauss_index:
+                D = material.D_matrix()
                 B = self.mesh.B[:,:,k]
                 newS[:, k] = D@B@U_element
         self.values['S11'], self.values['S22'], self.values['S12'] = newS
     def return_all(self):
         return np.array([self.values['S11'], self.values['S22'], self.values['S12']])
+
+class delta_Stress(Elemental_quantity):
+    """Delta Stress tensor object."""
+    def __init__(self, mesh: Mesh, number_of_components = 3):
+        super().__init__(mesh, number_of_components)
+        self.values = {'delS11': np.zeros(self.length), 'delS22': np.zeros(self.length), 'delS12': np.zeros(self.length)}
+        self.tensor = np.array([self.values['delS11'], self.values['delS22'], self.values['delS12']])
+    def update(self, new_values):
+        self.values['delS11'], self.values['delS22'], self.values['delS12'] = new_values
+    def clear(self):
+        self.values = {'delS11': np.zeros(self.length), 'delS22': np.zeros(self.length), 'delS12': np.zeros(self.length)}
+    def compute(self, S, delE):
+        newS = np.zeros((3, self.length))
+        material = self.mesh.material
+        for k in enumerate(self.mesh.elements):
+            i = k[0]
+            element = k[1]
+            n1, n2, n3, n4 = element
+            index = [n1*2, n1*2+1, n2*2, n2*2+1, n3*2, n3*2+1, n4*2, n4*2+1]
+            gauss_index = np.arange(4*i, 4*i+4)
+            for k in gauss_index:
+                D = material.D_matrix()
+                B = self.mesh.B[:,:,k]
+                newS[:, k] = D@delE[:, k]
+        self.values['delS11'], self.values['delS22'], self.values['delS12'] = newS
+    def return_all(self):
+        return np.array([self.values['delS11'], self.values['delS22'], self.values['delS12']])
 
 class Strain(Elemental_quantity):
     """Strain tensor object."""
@@ -675,6 +719,8 @@ class delta_Strain(Elemental_quantity):
         self.tensor = np.array([self.values['dE11'], self.values['dE22'], self.values['dE12']])
     def update(self, new_values):
         self.values['dE11'], self.values['dE22'], self.values['dE12'] = new_values
+    def clear(self):
+        self.values = {'dE11': np.zeros(self.length), 'dE22': np.zeros(self.length), 'dE12': np.zeros(self.length)}
     def compute(self, delU):
         delE = np.zeros((3, self.length))
         for k in enumerate(self.mesh.elements):
@@ -740,31 +786,104 @@ class Solver:
 
 class Standard(Solver):
     def __init__(self, Kg: Global_K_matrix, Tg: Global_T_matrix, Fg: Global_F_matrix, BC: Boundary_condition, 
-                 S: Stress, E: Strain, U: Displacement):
-        self.K = Kg.K_global
-        self.F = Fg.F_global
-        self.T = Tg.T_global
+                 S: Stress, E: Strain, U: Displacement, mesh: Mesh):
+        self.mesh = mesh
+        self.Kmat = Kg
+        self.Fmat = Fg
+        self.Tmat = Tg
+        self.K = self.Kmat.K_global
+        self.F = self.Fmat.F_global
+        self.T = self.Tmat.T_global
         self.BC = BC
         self.S = S
         self.E = E
         self.U = U
-        # self.delS = delS
-        # self.delE = delE
-        # self.delq = delq
-        # self.dq = dq
-    def start(self):
-        # Construct the problem [K C';C zeros(size(C,1))]\[R;Q]
-        R = self.F - self.T
-        Q = self.BC.Q
 
-        a = np.block([[self.K, self.BC.C.T],
-                 [self.BC.C, np.zeros((self.BC.C.shape[0], self.BC.C.shape[0]))]])
-        b = np.append(R, Q.T)
+        self.delS = delta_Stress(self.mesh)
+        self.delE = delta_Strain(self.mesh)
+        self.delQ = delta_Displacement(self.mesh)
+        
+        self.nq = np.zeros((self.K.shape[0]))
+        self.nS = Stress(self.mesh)
+        self.nE = Strain(self.mesh)
 
-        c = np.linalg.solve(a, b)
+    def start(self, initial_stepsize = 0.1, end_steptime = 1):
+        tol = 0.01
+        stepsize = initial_stepsize
+        steptime = initial_stepsize
+        endtime = end_steptime
+        complete = 0
+        while complete == 0:
+            errorflag = 0
+            self.delQ.clear()
+            self.delE.clear()
+            self.delS.clear()
+            while steptime <= endtime:
+                progress = steptime/endtime
+                print('step time: ', steptime, progress)
 
-        self.U.update(c[0:self.K.shape[0]])
-        print('Solve complete.')
+                self.delE.compute(self.delQ.return_all())
+                self.nE.update(self.E.return_all() + self.delE.return_all())
+                print('ne', self.nE.values)
+                print('delE', self.delE.values)
+
+                self.delS.compute(self.S.return_all(), self.delE.return_all())
+                self.nS.update(self.S.return_all() + self.delS.return_all())
+                print('ns', self.nS.values)
+                print('S', self.S.values)
+                print(self.delS.values)
+
+                # Construct K and T:
+                self.Kmat.build(self.S, self.E)
+                self.Tmat.build(self.nS)
+                # Residual force vector:
+                R = progress*self.F - self.Tmat.T_global
+                print('T', self.Tmat.T_global)
+                print('R', R)
+
+                # Construct BCs with [K C';C zeros(size(C,1))]\[R;Q]
+                Q = progress*self.BC.Q
+
+                a = np.block([[self.Kmat.K_global, self.BC.C.T],
+                        [self.BC.C, np.zeros((self.BC.C.shape[0], self.BC.C.shape[0]))]])
+                b = np.append(R, Q.T)
+
+                # Solve
+                # error = np.sqrt((R.T@R)/np.transpose(self.F)@(self.F))
+                # print('error: ', error)
+
+
+                print('errorflag', errorflag)
+                if errorflag == 1:
+                    if steptime == endtime:
+                        complete = 1
+                        print('Solve complete.')
+                        break
+                    else:
+                        steptime += stepsize
+                        print('steptime', steptime)
+                        if steptime > endtime:
+                            steptime = endtime
+                        break
+                self.nsol = np.linalg.solve(a, b)
+                self.nq = self.nsol[0:self.K.shape[0]]
+                self.delQ.update(self.delQ.return_all() + self.nq)
+
+                # Compute error
+                print('U', self.U.return_all())
+                print('delQ', self.delQ.return_all())
+                error = np.sqrt((self.nq.T@self.nq)/np.transpose(self.U.return_all() + self.delQ.return_all())@(self.U.return_all() + self.delQ.return_all()))
+                print('error: ', error)
+                if error < tol:
+                    errorflag = 1
+                else:
+                    errorflag = 0
+        
+            self.U.update(self.U.return_all() + self.delQ.return_all())
+            self.S.update(self.nS.return_all())
+            self.E.update(self.nE.return_all())
+
+
 
 def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_threshold = 0.75, plot_mesh = True):
     """Creates a contour plot of a Nodal_quantity or Element_quantity"""
@@ -861,7 +980,7 @@ start = timeit.default_timer()
 
 mesher1 = Mesher()
 # mesher1.set_params([2,2], [[3,3], [3,3]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]], surfs=[[0,2], [0,6], [6,7], [5,2]])
-mesher1.set_params([1,1], [[40],[4]], mesher1.coords_Quad(10, 1), surfs=[[0,1], [0,2], [2,3]])
+mesher1.set_params([1,1], [[1],[1]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
 mesher1.create()
 
 # mesher1.nodes[:,4] = np.array([[.6, .2]])
@@ -869,8 +988,9 @@ mesher1.create()
 mesh1 = Mesh()
 mesh1.make_mesh(mesher1)
 steel = Material_model([30e6, 0.30], "linear elastic, plane strain")
+mesh1.assign_material(steel)
 K = Global_K_matrix(mesh1)
-K.build(steel)
+K.build(S, E)
 mesh1.plot()
 
 E = Strain(mesh1)
@@ -886,22 +1006,22 @@ sidesurf = mesher1.surfs[1]
 
 BC1 = Boundary_condition(K)
 BC1.apply_BC(sidesurf, np.zeros(len(sidesurf)), 'U1')
-BC1.apply_BC(sidesurf, np.zeros(len(sidesurf)), 'U2')
+BC1.apply_BC(bottomsurf, np.zeros(len(sidesurf)), 'U2')
 
 F.apply_traction(topsurf1, -10000, 'y')
              
-solution = Standard(K,T,F,BC1,S,E,U)
+solution = Standard(K, T, F, BC1, S, E, U, mesh1)
 solution.start()
 
 stop = timeit.default_timer()
 print('Elapsed time: ', f'{stop-start} seconds.')
 
-E.compute(U.return_all())
-S.compute(U.return_all())
+# E.compute(U.return_all())
+# S.compute(U.return_all())
 
 plot_result(mesh1, S, 'S22', U)
 plot_result(mesh1, S, 'S11', U)
 plot_result(mesh1, S, 'S12', U)
 
-# plot_result(mesh1, U, 'U1', U=U)
-# plot_result(mesh1, U, 'U2', U=U)
+plot_result(mesh1, U, 'U1', U=U)
+plot_result(mesh1, U, 'U2', U=U)
