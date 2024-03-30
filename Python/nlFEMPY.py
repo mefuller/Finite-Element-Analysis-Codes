@@ -818,28 +818,40 @@ class Standard(Solver):
             self.delQ.clear()
             self.delE.clear()
             self.delS.clear()
-            while steptime <= endtime:
+            n_iteration = 0
+            while steptime <= endtime and n_iteration <= 10:
+                n_iteration += 1
+                if errorflag == 1:
+                    if steptime == endtime:
+                        complete = 1
+                        print('### Solve complete. ###')
+                        break
+                    else:
+                        steptime += stepsize
+                        if steptime > endtime:
+                            steptime = endtime
+                        break
+
                 progress = steptime/endtime
-                print('step time: ', steptime, progress)
+                print('-----\n\n*** step time: %1.2f, iteration = %1i ***'%(steptime, n_iteration))
 
                 self.delE.compute(self.delQ.return_all())
                 self.nE.update(self.E.return_all() + self.delE.return_all())
-                print('ne', self.nE.values)
-                print('delE', self.delE.values)
+                # print('ne', self.nE.values)
+                # print('delE', self.delE.values)
 
                 self.delS.compute(self.S.return_all(), self.delE.return_all())
                 self.nS.update(self.S.return_all() + self.delS.return_all())
-                print('ns', self.nS.values)
-                print('S', self.S.values)
-                print(self.delS.values)
+                # print('ns', self.nS.values)
+                # print('S', self.S.values)
+                # print('delS', self.delS.values)
 
                 # Construct K and T:
                 self.Kmat.build(self.S, self.E)
                 self.Tmat.build(self.nS)
                 # Residual force vector:
                 R = progress*self.F - self.Tmat.T_global
-                print('T', self.Tmat.T_global)
-                print('R', R)
+
 
                 # Construct BCs with [K C';C zeros(size(C,1))]\[R;Q]
                 Q = progress*self.BC.Q
@@ -849,31 +861,18 @@ class Standard(Solver):
                 b = np.append(R, Q.T)
 
                 # Solve
-                # error = np.sqrt((R.T@R)/np.transpose(self.F)@(self.F))
-                # print('error: ', error)
-
-
-                print('errorflag', errorflag)
-                if errorflag == 1:
-                    if steptime == endtime:
-                        complete = 1
-                        print('Solve complete.')
-                        break
-                    else:
-                        steptime += stepsize
-                        print('steptime', steptime)
-                        if steptime > endtime:
-                            steptime = endtime
-                        break
                 self.nsol = np.linalg.solve(a, b)
                 self.nq = self.nsol[0:self.K.shape[0]]
+                self.constraint_force = self.nsol[self.K.shape[0]:len(self.nsol)]
                 self.delQ.update(self.delQ.return_all() + self.nq)
+                
 
                 # Compute error
-                print('U', self.U.return_all())
-                print('delQ', self.delQ.return_all())
-                error = np.sqrt((self.nq.T@self.nq)/np.transpose(self.U.return_all() + self.delQ.return_all())@(self.U.return_all() + self.delQ.return_all()))
-                print('error: ', error)
+                # error = np.sqrt((self.nq.T@self.nq)/(np.transpose(self.U.return_all() + self.delQ.return_all())@(self.U.return_all() + self.delQ.return_all())))
+                R[self.BC.DOFs] -= self.constraint_force #Add constraint forces back into the residual
+                error = np.sqrt((R@R)/(self.F@self.F))
+                # error = np.max(np.absolute(R))/np.mean(np.absolute(self.F))
+                print('Force residual norm: %1.3E \nMax. R: %1.3E'%(error, np.max(R)))
                 if error < tol:
                     errorflag = 1
                 else:
@@ -980,10 +979,10 @@ start = timeit.default_timer()
 
 mesher1 = Mesher()
 # mesher1.set_params([2,2], [[3,3], [3,3]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]], surfs=[[0,2], [0,6], [6,7], [5,2]])
-mesher1.set_params([1,1], [[1],[1]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
+mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
 mesher1.create()
 
-# mesher1.nodes[:,4] = np.array([[.6, .2]])
+mesher1.nodes[:,4] = np.array([[.6, .2]])
 
 mesh1 = Mesh()
 mesh1.make_mesh(mesher1)
