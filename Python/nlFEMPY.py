@@ -430,6 +430,8 @@ class Material_model:
             young_modulus = self.inputs[0]
             nu = self.inputs[1]
             D = young_modulus/((1 + nu)*(1 - 2*nu))*np.array([[1.0 - nu, nu, 0.0], [nu, 1.0 - nu, 0.0], [0.0, 0.0, (1.0 - 2*nu)/2.0]])
+        if self.type == "strain locking":
+            pass
         return D
 
 class Global_K_matrix:
@@ -989,7 +991,6 @@ mesh1.make_mesh(mesher1)
 steel = Material_model([30e6, 0.30], "linear elastic, plane strain")
 mesh1.assign_material(steel)
 K = Global_K_matrix(mesh1)
-K.build(S, E)
 mesh1.plot()
 
 E = Strain(mesh1)
