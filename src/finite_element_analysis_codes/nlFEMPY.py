@@ -6,7 +6,7 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.colors import BoundaryNorm
 from matplotlib.colors import ListedColormap
 
-def r_theta(x: np.ndarray, y):
+def r_theta(x: np.ndarray, y: np.ndarray):
     """Returns polar coordinates r and theta for a given x and y pair."""
     r = np.sqrt(x**2 + y**2)
     theta = np.arctan(y/x)
@@ -973,55 +973,3 @@ def plot_result(mesh: Mesh, result, component: str, U, deformed=True, avg_thresh
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     plt.show()
-
-
-
-# Test code
-start = timeit.default_timer()
-
-mesher1 = Mesher()
-# mesher1.set_params([2,2], [[3,3], [3,3]], mesher1.coords_quarterCircle(1), [3], [[4,7,4,5]], surfs=[[0,2], [0,6], [6,7], [5,2]])
-mesher1.set_params([1,1], [[2],[2]], mesher1.coords_Quad(1, 1), surfs=[[0,1], [0,2], [2,3]])
-mesher1.create()
-
-mesher1.nodes[:,4] = np.array([[.6, .2]])
-
-mesh1 = Mesh()
-mesh1.make_mesh(mesher1)
-steel = Material_model([30e6, 0.30], "linear elastic, plane strain")
-mesh1.assign_material(steel)
-K = Global_K_matrix(mesh1)
-mesh1.plot()
-
-E = Strain(mesh1)
-dE = delta_Strain(mesh1)
-S = Stress(mesh1)
-U = Displacement(mesh1)
-T = Global_T_matrix(mesh1)
-F = Global_F_matrix(mesh1)
-
-topsurf1 = mesher1.surfs[2]
-bottomsurf = mesher1.surfs[0]
-sidesurf = mesher1.surfs[1]
-
-BC1 = Boundary_condition(K)
-BC1.apply_BC(sidesurf, np.zeros(len(sidesurf)), 'U1')
-BC1.apply_BC(bottomsurf, np.zeros(len(sidesurf)), 'U2')
-
-F.apply_traction(topsurf1, -10000, 'y')
-             
-solution = Standard(K, T, F, BC1, S, E, U, mesh1)
-solution.start()
-
-stop = timeit.default_timer()
-print('Elapsed time: ', f'{stop-start} seconds.')
-
-# E.compute(U.return_all())
-# S.compute(U.return_all())
-
-plot_result(mesh1, S, 'S22', U)
-plot_result(mesh1, S, 'S11', U)
-plot_result(mesh1, S, 'S12', U)
-
-plot_result(mesh1, U, 'U1', U=U)
-plot_result(mesh1, U, 'U2', U=U)
